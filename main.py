@@ -1,9 +1,24 @@
 import argparse
 import asyncio
+import re
 
 from auth import is_logged_in
 from browser import create_browser, do_login, intercept_subtitle, get_course_list
 from subtitle import save_subtitle
+
+LIVINGROOM_URL_RE = re.compile(
+    r"video\.jw\.scut\.edu\.cn/livingroom\?.*?"
+    r"(?:^|&|)(?:course_id=(\d+))?"
+    r"(?:^|&|)(?:sub_id=(\d+))"
+)
+
+
+def parse_course_url(url: str) -> tuple[str | None, str | None]:
+    """从课程 URL 中解析 course_id 和 sub_id。"""
+    m = LIVINGROOM_URL_RE.search(url)
+    if m:
+        return m.group(1), m.group(2)
+    return None, None
 
 
 async def cmd_login(args):
@@ -42,32 +57,42 @@ async def cmd_get(args):
         print("请先登录：uv run python main.py login")
         return
 
+    # 确定要抓取的课程列表：[(course_id, sub_id), ...]
+    tasks: list[tuple[str | None, str]] = []
+
+    if args.urls:
+        for url in args.urls:
+            course_id, sub_id = parse_course_url(url)
+            if sub_id:
+                tasks.append((course_id, sub_id))
+            else:
+                print(f"无法解析链接：{url}")
+    else:
+        print("请粘贴课程链接（回车确认）：")
+        url = input("> ").strip()
+        if not url:
+            print("未提供链接。")
+            return
+        course_id, sub_id = parse_course_url(url)
+        if not sub_id:
+            print("无法从链接中解析课程信息，请检查链接是否正确。")
+            return
+        tasks.append((course_id, sub_id))
+
     browser, context = await create_browser(headless=args.headless)
-
-    sub_ids = args.sub_ids or []
-
-    if args.all:
-        print("正在获取课程列表...")
-        courses = await get_course_list(context)
-        sub_ids = [c.get("sub_id", c.get("id")) for c in courses if c.get("sub_id") or c.get("id")]
-        print(f"共 {len(sub_ids)} 门课程")
-
-    if not sub_ids:
-        print("请指定 sub_id 或使用 --all")
-        await context.close()
-        await browser.close()
-        return
 
     success = 0
     failed = 0
-    for i, sub_id in enumerate(sub_ids, 1):
-        print(f"[{i}/{len(sub_ids)}] 正在获取课程 {sub_id} 的字幕...")
+    for i, (course_id, sub_id) in enumerate(tasks, 1):
+        label = sub_id
+        print(f"[{i}/{len(tasks)}] 正在获取课程 {label} 的字幕...")
         try:
-            data = await intercept_subtitle(context, sub_id, course_id=args.course_id)
-            json_path, srt_path = save_subtitle(data, sub_id)
+            data = await intercept_subtitle(context, sub_id, course_id=course_id)
+            json_path, srt_path, txt_path = save_subtitle(data, sub_id)
             print(f"  成功！共 {len(data)} 条字幕")
             print(f"  JSON: {json_path}")
             print(f"  SRT:  {srt_path}")
+            print(f"  TXT:  {txt_path}")
             success += 1
         except Exception as e:
             print(f"  失败: {e}")
@@ -87,9 +112,7 @@ def main():
     subparsers.add_parser("courses", help="列出所有课程")
 
     get_parser = subparsers.add_parser("get", help="获取课程字幕")
-    get_parser.add_argument("sub_ids", nargs="*", help="课程 sub_id（支持多个）")
-    get_parser.add_argument("--all", action="store_true", help="获取所有课程字幕")
-    get_parser.add_argument("--course-id", help="course_id 参数（部分课程必须）")
+    get_parser.add_argument("urls", nargs="*", help="课程链接（支持多个）")
     get_parser.add_argument("--headless", action="store_true", help="无头模式运行（不显示浏览器窗口）")
 
     args = parser.parse_args()

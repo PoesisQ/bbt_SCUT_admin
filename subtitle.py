@@ -29,13 +29,22 @@ def json_to_srt(subtitle_json: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def json_to_text(subtitle_json: list[dict]) -> str:
+    return "\n".join(
+        item.get("Text", "").strip()
+        for item in subtitle_json
+        if item.get("Text", "").strip()
+    )
+
+
 def save_subtitle(
     subtitle_json: list[dict], sub_id: str, course_name: str | None = None
-) -> tuple[Path, Path]:
+) -> tuple[Path, Path, Path]:
     json_dir = OUTPUT_DIR / "json"
     srt_dir = OUTPUT_DIR / "srt"
-    json_dir.mkdir(parents=True, exist_ok=True)
-    srt_dir.mkdir(parents=True, exist_ok=True)
+    txt_dir = OUTPUT_DIR / "txt"
+    for d in (json_dir, srt_dir, txt_dir):
+        d.mkdir(parents=True, exist_ok=True)
 
     safe_name = "".join(c if c.isalnum() or c in "-_" else "_" for c in (course_name or sub_id))
     base_name = f"{safe_name}_{sub_id}"
@@ -44,9 +53,12 @@ def save_subtitle(
     with open(json_path, "w", encoding="utf-8") as f:
         json.dump(subtitle_json, f, ensure_ascii=False, indent=2)
 
-    srt_content = json_to_srt(subtitle_json)
     srt_path = srt_dir / f"{base_name}.srt"
     with open(srt_path, "w", encoding="utf-8") as f:
-        f.write(srt_content)
+        f.write(json_to_srt(subtitle_json))
 
-    return json_path, srt_path
+    txt_path = txt_dir / f"{base_name}.txt"
+    with open(txt_path, "w", encoding="utf-8") as f:
+        f.write(json_to_text(subtitle_json))
+
+    return json_path, srt_path, txt_path
