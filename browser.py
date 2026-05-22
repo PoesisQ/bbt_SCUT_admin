@@ -158,3 +158,19 @@ async def get_course_list(context: BrowserContext) -> list[dict]:
         await page2.close()
 
     return courses
+
+
+async def get_course_catalogue(context: BrowserContext, course_id: str) -> list[dict]:
+    page = await context.new_page()
+    await page.goto(BASE_URL, wait_until="networkidle")
+
+    result = await page.evaluate(
+        """async (courseId) => {
+            const resp = await fetch("/courseapi/v2/course/catalogue?course_id=" + courseId);
+            return await resp.json();
+        }""",
+        course_id,
+    )
+
+    await page.close()
+    return result.get("result", {}).get("data", [])
