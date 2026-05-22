@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 320px; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; color: #333; }
+
+    .header {
+      padding: 16px;
+      background: #1a73e8;
+      color: #fff;
+    }
+    .header h1 { font-size: 16px; font-weight: 600; }
+    .header .subtitle { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+
+    .content { padding: 16px; }
+
+    .info { margin-bottom: 16px; }
+    .info-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+    .info-label { color: #666; }
+    .info-value { color: #333; font-weight: 500; max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .formats { margin-bottom: 16px; }
+    .formats label {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 0; cursor: pointer; font-size: 13px;
+    }
+    .formats input[type="checkbox"] { width: 16px; height: 16px; accent-color: #1a73e8; }
+
+    .btn {
+      width: 100%; padding: 10px;
+      background: #1a73e8; color: #fff; border: none; border-radius: 6px;
+      font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #1557b0; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .status {
+      margin-top: 12px; padding: 8px 12px;
+      border-radius: 4px; font-size: 12px; text-align: center;
+    }
+    .status.success { background: #e8f5e9; color: #2e7d32; }
+    .status.error { background: #fbe9e7; color: #c62828; }
+    .status.loading { background: #e3f2fd; color: #1565c0; }
+    .status.hidden { display: none; }
+
+    .error-page {
+      padding: 32px 16px; text-align: center; color: #666;
+    }
+    .error-page p { margin-bottom: 8px; font-size: 13px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="error-page" class="error-page hidden">
+    <p>请先打开课程播放页面</p>
+    <p style="font-size:12px; color:#999;">video.jw.scut.edu.cn/livingroom?...</p>
+  </div>
+
+  <div id="main" class="hidden">
+    <div class="header">
+      <h1>SCUT 课程字幕下载</h1>
+      <div class="subtitle" id="course-subtitle"></div>
+    </div>
+    <div class="content">
+      <div class="info">
+        <div class="info-row">
+          <span class="info-label">课程</span>
+          <span class="info-value" id="course-name">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">教师</span>
+          <span class="info-value" id="lecturer-name">-</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">课时</span>
+          <span class="info-value" id="sub-title">-</span>
+        </div>
+      </div>
+
+      <div class="formats">
+        <label><input type="checkbox" id="fmt-srt" checked> SRT（字幕文件）</label>
+        <label><input type="checkbox" id="fmt-txt" checked> TXT（纯文本）</label>
+        <label><input type="checkbox" id="fmt-json"> JSON（原始数据）</label>
+      </div>
+
+      <button class="btn" id="download-btn">下载字幕</button>
+
+      <div id="status" class="status hidden"></div>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
