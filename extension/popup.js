@@ -1,59 +1,56 @@
 const API_BASE = "https://video.jw.scut.edu.cn";
+const API = {
+  SUBTITLE: (subId) => `${API_BASE}/courseapi/v3/web-socket/search-trans-result?sub_id=${encodeURIComponent(subId)}&format=json`,
+  SUB_INFO: (courseId, subId) => `${API_BASE}/courseapi/v3/portal-home-setting/get-sub-info?course_id=${encodeURIComponent(courseId)}&sub_id=${encodeURIComponent(subId)}`,
+  COURSE_TITLE: (courseId) => `${API_BASE}/courseapi/v3/multi-search/get-course-teacher-others?course_id=${encodeURIComponent(courseId)}&per_page=1`,
+  CATALOGUE: (courseId) => `${API_BASE}/courseapi/v2/course/catalogue?course_id=${encodeURIComponent(courseId)}`,
+};
 
 // === URL parsing ===
 
 function parseCourseUrl(url) {
   try {
     const u = new URL(url);
-    if (!u.hostname.includes("video.jw.scut.edu.cn")) return null;
-    const params = u.searchParams;
-    const subId = params.get("sub_id");
+    if (u.hostname !== "video.jw.scut.edu.cn") return null;
+    const subId = u.searchParams.get("sub_id");
     if (!subId) return null;
-    return { subId, courseId: params.get("course_id") };
+    return { subId, courseId: u.searchParams.get("course_id") };
   } catch {
     return null;
   }
 }
 
+// === Filename sanitization ===
+
+function sanitizeFilename(name) {
+  const cleaned = name.replace(/[\/\\:*?"<>|]/g, "_").replace(/\s+/g, " ").trim();
+  return cleaned || "untitled";
+}
+
 // === API calls ===
 
 async function fetchSubtitle(subId) {
-  const resp = await fetch(
-    `${API_BASE}/courseapi/v3/web-socket/search-trans-result?sub_id=${encodeURIComponent(subId)}&format=json`,
-    { credentials: "include" }
-  );
+  const resp = await fetch(API.SUBTITLE(subId), { credentials: "include" });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json();
 }
 
 async function fetchCourseInfo(courseId, subId) {
-  const resp = await fetch(
-    `${API_BASE}/courseapi/v3/portal-home-setting/get-sub-info?course_id=${encodeURIComponent(courseId)}&sub_id=${encodeURIComponent(subId)}`,
-    { credentials: "include" }
-  );
+  const resp = await fetch(API.SUB_INFO(courseId, subId), { credentials: "include" });
   if (!resp.ok) return null;
-  const body = await resp.json();
-  return body?.data || null;
+  return (await resp.json())?.data || null;
 }
 
 async function fetchCourseTitle(courseId) {
-  const resp = await fetch(
-    `${API_BASE}/courseapi/v3/multi-search/get-course-teacher-others?course_id=${encodeURIComponent(courseId)}&per_page=1`,
-    { credentials: "include" }
-  );
+  const resp = await fetch(API.COURSE_TITLE(courseId), { credentials: "include" });
   if (!resp.ok) return null;
-  const body = await resp.json();
-  return body?.data?.[0]?.course_title || null;
+  return (await resp.json())?.data?.[0]?.course_title || null;
 }
 
 async function fetchCatalogue(courseId) {
-  const resp = await fetch(
-    `${API_BASE}/courseapi/v2/course/catalogue?course_id=${encodeURIComponent(courseId)}`,
-    { credentials: "include" }
-  );
+  const resp = await fetch(API.CATALOGUE(courseId), { credentials: "include" });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const body = await resp.json();
-  return body?.result?.data || [];
+  return (await resp.json())?.result?.data || [];
 }
 
 // === JSON parsing ===
@@ -154,7 +151,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   const { subId, courseId } = parsed;
   mainEl.classList.remove("hidden");
 
-  // Shared state
   let courseTitle = null;
   let catalogue = [];
 
@@ -242,18 +238,25 @@ document.addEventListener("DOMContentLoaded", async () => {
     catalogue.forEach((lesson) => {
       const item = document.createElement("div");
       item.className = "lesson-item";
-      item.innerHTML = `
-        <input type="checkbox" class="lesson-check" data-sub-id="${lesson.sub_id}" checked>
-        <span class="lesson-title">${lesson.title || lesson.sub_id}</span>
-      `;
+
+      const checkbox = document.createElement("input");
+      checkbox.type = "checkbox";
+      checkbox.className = "lesson-check";
+      checkbox.dataset.subId = lesson.sub_id;
+      checkbox.checked = true;
+
+      const label = document.createElement("span");
+      label.className = "lesson-title";
+      label.textContent = lesson.title || lesson.sub_id;
+
+      item.appendChild(checkbox);
+      item.appendChild(label);
       listEl.appendChild(item);
     });
 
-    // Select all toggle
     const selectAll = document.getElementById("select-all");
     selectAll.addEventListener("change", () => {
-      const checks = listEl.querySelectorAll(".lesson-check");
-      checks.forEach((c) => (c.checked = selectAll.checked));
+      listEl.querySelectorAll(".lesson-check").forEach((c) => (c.checked = selectAll.checked));
       updateCount();
     });
     listEl.addEventListener("change", (e) => {
@@ -298,25 +301,30 @@ document.addEventListener("DOMContentLoaded", async () => {
     showStatus("status-batch", `正在获取 0/${selectedSubIds.length}...`, "loading");
 
     const files = [];
-    let success = 0;
-    let failed = 0;
+    const failed = [];
+    let successLessons = 0;
 
     for (let i = 0; i < selectedSubIds.length; i++) {
       const sid = selectedSubIds[i];
       const lesson = catalogue.find((l) => l.sub_id === sid);
-      const label = lesson?.title || sid;
+      const label = sanitizeFilename(lesson?.title || sid);
+      const prefix = `${String(i + 1).padStart(2, "0")}_${label}_${sid}`;
 
       try {
         const raw = await fetchSubtitle(sid);
         const items = extractSubtitleItems(raw);
         if (items.length > 0) {
-          if (wantSrt) files.push({ name: `${label}.srt`, content: toSrt(items) });
-          if (wantTxt) files.push({ name: `${label}.txt`, content: toTxt(items) });
-          if (wantJson) files.push({ name: `${label}.json`, content: JSON.stringify(items, null, 2) });
-          success++;
+          if (wantSrt) files.push({ name: `${prefix}.srt`, content: toSrt(items) });
+          if (wantTxt) files.push({ name: `${prefix}.txt`, content: toTxt(items) });
+          if (wantJson) files.push({ name: `${prefix}.json`, content: JSON.stringify(items, null, 2) });
+          successLessons++;
+        } else {
+          failed.push(label);
+          console.warn(`[SCUT] 课时 "${label}" (${sid}) 无字幕数据`);
         }
-      } catch {
-        failed++;
+      } catch (err) {
+        failed.push(label);
+        console.warn(`[SCUT] 课时 "${label}" (${sid}) 获取失败:`, err.message);
       }
 
       const pct = Math.round(((i + 1) / selectedSubIds.length) * 100);
@@ -325,9 +333,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
 
     if (files.length > 0) {
-      const zipName = `${courseTitle || "subtitles"}.zip`;
+      const zipName = sanitizeFilename(`${courseTitle || "subtitles"}.zip`);
       await downloadZip(files, zipName);
-      showStatus("status-batch", `完成：${success} 成功，${failed} 失败`, success > 0 ? "success" : "error");
+      const summary = `${successLessons} 节成功，${failed.length} 节失败，${files.length} 个文件`;
+      const msg = failed.length > 0
+        ? `完成：${summary}（失败：${failed.slice(0, 3).join("、")}${failed.length > 3 ? "..." : ""}）`
+        : `完成：${summary}`;
+      showStatus("status-batch", msg, "success");
+    } else {
+      showStatus("status-batch", "未能获取任何字幕数据", "error");
+    }
+      showStatus("status-batch", msg, "success");
     } else {
       showStatus("status-batch", "未能获取任何字幕数据", "error");
     }
