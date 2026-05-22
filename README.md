@@ -1,10 +1,12 @@
 # SCUT Courses Replay Extraction
 
-从华南理工大学“百步梯学堂”中提供的课程回放平台“华园视频”提取**课程回放字幕**，支持 JSON、SRT、纯文本三种格式。
+![](./assets/figures/icon.png)
 
-提供两种使用方式：**Chrome 浏览器插件**和**命令行工具**。
+从华南理工大学“百步梯学堂”中提供的课程回放平台“华园视频”提取**课程回放字幕**，支持 JSON、SRT、纯文本三种格式，可批量导出同一课程字幕并打包为ZIP。
 
-## 宇宙免责声明
+提供两种使用方式：**Chrome/Edge 浏览器插件**和**命令行工具**。
+
+## 免责声明
 本项目仅用于个人学习交流与课程复习，使用到的所有内容均来自于课程界面公开信息。
 不会绕过学校统一认证，也不会破解视频权限，仅对用户本人已拥有访问权限的课程页面进行字幕提取。
 
@@ -25,10 +27,13 @@
 
 1. Chrome 网址栏输入 `chrome://extensions/` 打开插件面板或直接点击右上角插件模块进入。
 2. 右上角开启 **开发者模式**
+![](./assets/figures/extension_panel.png)
 3. 点击 **“加载已解压的扩展程序”**
-4. 选择本项目的 `extension/` 目录
+4. 选择本项目的 `extension/` 目录并确定。
 
 安装成功后，浏览器右上角会出现插件图标与名称。
+
+Microsoft Edge 插件安装同理。
 
 ### 使用
 
@@ -150,11 +155,15 @@ uv run python main.py get --all "https://video.jw.scut.edu.cn/livingroom?course_
 └── data/                # 登录状态（CLI）
 ```
 
-## 实现详情
-
-详见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
+具体实现详见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 ## 已知限制
 
 - **CLI 需要有头浏览器** — headless 模式下播放器不会触发字幕 API 请求
 - **登录状态会过期** — Cookie 失效后需重新扫码
+
+## 权限说明
+
+插件仅在 `video.jw.scut.edu.cn` 页面运行，用于读取当前课程页面信息与字幕接口响应。
+
+不会上传任何课程数据，也不会收集用户账号信息。
