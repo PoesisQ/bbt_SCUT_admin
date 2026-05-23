@@ -343,10 +343,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     } else {
       showStatus("status-batch", "未能获取任何字幕数据", "error");
     }
-      showStatus("status-batch", msg, "success");
-    } else {
-      showStatus("status-batch", "未能获取任何字幕数据", "error");
-    }
 
     btn.disabled = false;
   });
