@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { width: 340px; font-family: -apple-system, "PingFang SC", sans-serif; font-size: 14px; color: #333; }
+
+    .header {
+      padding: 16px;
+      background: #1a73e8;
+      color: #fff;
+    }
+    .header h1 { font-size: 16px; font-weight: 600; }
+    .header .subtitle { font-size: 12px; opacity: 0.85; margin-top: 2px; }
+
+    .tabs {
+      display: flex;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .tab {
+      flex: 1;
+      padding: 10px;
+      text-align: center;
+      font-size: 13px;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      color: #666;
+      background: none;
+      border-top: none;
+      border-left: none;
+      border-right: none;
+    }
+    .tab.active {
+      color: #1a73e8;
+      border-bottom-color: #1a73e8;
+      font-weight: 500;
+    }
+    .tab:hover { color: #1a73e8; }
+
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .content { padding: 16px; }
+
+    .info { margin-bottom: 16px; }
+    .info-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+    .info-label { color: #666; }
+    .info-value { color: #333; font-weight: 500; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .formats { margin-bottom: 16px; }
+    .formats label {
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 0; cursor: pointer; font-size: 13px;
+    }
+    .formats input[type="checkbox"] { width: 16px; height: 16px; accent-color: #1a73e8; }
+
+    .btn {
+      width: 100%; padding: 10px;
+      background: #1a73e8; color: #fff; border: none; border-radius: 6px;
+      font-size: 14px; font-weight: 500; cursor: pointer;
+      transition: background 0.2s;
+    }
+    .btn:hover { background: #1557b0; }
+    .btn:disabled { background: #ccc; cursor: not-allowed; }
+
+    .lesson-list {
+      max-height: 240px;
+      overflow-y: auto;
+      margin-bottom: 12px;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+    }
+    .lesson-list-header {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      border-bottom: 1px solid #e0e0e0;
+      font-size: 12px; color: #666;
+      position: sticky; top: 0;
+      background: #fafafa;
+    }
+    .lesson-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 12px;
+      font-size: 13px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+    .lesson-item:last-child { border-bottom: none; }
+    .lesson-item input[type="checkbox"] { width: 15px; height: 15px; accent-color: #1a73e8; flex-shrink: 0; }
+    .lesson-title { flex: 1; }
+    .lesson-size { font-size: 11px; color: #999; }
+
+    .progress-bar {
+      height: 4px;
+      background: #e0e0e0;
+      border-radius: 2px;
+      margin-bottom: 12px;
+      overflow: hidden;
+    }
+    .progress-bar-fill {
+      height: 100%;
+      background: #1a73e8;
+      border-radius: 2px;
+      transition: width 0.3s;
+      width: 0%;
+    }
+
+    .status {
+      margin-top: 12px; padding: 8px 12px;
+      border-radius: 4px; font-size: 12px; text-align: center;
+    }
+    .status.success { background: #e8f5e9; color: #2e7d32; }
+    .status.error { background: #fbe9e7; color: #c62828; }
+    .status.loading { background: #e3f2fd; color: #1565c0; }
+    .status.hidden { display: none; }
+
+    .error-page {
+      padding: 32px 16px; text-align: center; color: #666;
+    }
+    .error-page p { margin-bottom: 8px; font-size: 13px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div id="error-page" class="error-page hidden">
+    <p>请先打开课程播放页面</p>
+    <p style="font-size:12px; color:#999;">video.jw.scut.edu.cn/livingroom?...</p>
+  </div>
+
+  <div id="main" class="hidden">
+    <div class="header">
+      <h1>SCUT 课程字幕下载</h1>
+      <div class="subtitle" id="course-subtitle"></div>
+    </div>
+
+    <div class="tabs">
+      <button class="tab active" data-tab="single">当前课时</button>
+      <button class="tab" data-tab="batch">全部课时</button>
+    </div>
+
+    <!-- Single lesson tab -->
+    <div id="tab-single" class="tab-content active">
+      <div class="content">
+        <div class="info">
+          <div class="info-row">
+            <span class="info-label">课程</span>
+            <span class="info-value" id="course-name">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">教师</span>
+            <span class="info-value" id="lecturer-name">-</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">课时</span>
+            <span class="info-value" id="sub-title">-</span>
+          </div>
+        </div>
+        <div class="formats">
+          <label><input type="checkbox" id="fmt-srt" checked> SRT（字幕文件）</label>
+          <label><input type="checkbox" id="fmt-txt" checked> TXT（纯文本）</label>
+          <label><input type="checkbox" id="fmt-json"> JSON（字幕数组）</label>
+        </div>
+        <button class="btn" id="download-btn">下载字幕</button>
+        <div id="status-single" class="status hidden"></div>
+      </div>
+    </div>
+
+    <!-- Batch tab -->
+    <div id="tab-batch" class="tab-content">
+      <div class="content">
+        <div class="lesson-list" id="lesson-list">
+          <div class="lesson-list-header">
+            <input type="checkbox" id="select-all" checked>
+            <span id="lesson-count">加载中...</span>
+          </div>
+        </div>
+        <div class="formats">
+          <label><input type="checkbox" id="batch-fmt-srt" checked> SRT</label>
+          <label><input type="checkbox" id="batch-fmt-txt" checked> TXT</label>
+          <label><input type="checkbox" id="batch-fmt-json"> JSON</label>
+        </div>
+        <div class="progress-bar hidden" id="batch-progress-bar">
+          <div class="progress-bar-fill" id="batch-progress-fill"></div>
+        </div>
+        <button class="btn" id="batch-download-btn">下载全部 (ZIP)</button>
+        <div id="status-batch" class="status hidden"></div>
+      </div>
+    </div>
+  </div>
+
+  <script src="jszip.min.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

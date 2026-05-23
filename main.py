@@ -3,7 +3,7 @@ import asyncio
 import re
 
 from auth import is_logged_in
-from browser import create_browser, do_login, intercept_subtitle, get_course_list
+from browser import create_browser, do_login, intercept_subtitle, get_course_catalogue
 from subtitle import save_subtitle
 
 LIVINGROOM_URL_RE = re.compile(
@@ -30,41 +30,42 @@ async def cmd_login(args):
         await browser.close()
 
 
-async def cmd_courses(args):
-    if not is_logged_in():
-        print("请先登录：uv run python main.py login")
-        return
-
-    browser, context = await create_browser(headless=True)
-    try:
-        courses = await get_course_list(context)
-        if not courses:
-            print("未找到课程列表。可能登录状态已过期，请重新登录。")
-            return
-
-        print(f"\n共找到 {len(courses)} 门课程：\n")
-        for c in courses:
-            sub_id = c.get("sub_id", c.get("id", "?"))
-            name = c.get("name", c.get("title", c.get("course_name", "未知")))
-            print(f"  [{sub_id}] {name}")
-    finally:
-        await context.close()
-        await browser.close()
-
-
 async def cmd_get(args):
     if not is_logged_in():
         print("请先登录：uv run python main.py login")
         return
 
-    # 确定要抓取的课程列表：[(course_id, sub_id), ...]
-    tasks: list[tuple[str | None, str]] = []
+    # 确定要抓取的课程列表：[(course_id, sub_id, title), ...]
+    tasks: list[tuple[str | None, str, str]] = []
 
-    if args.urls:
+    if args.all:
+        # 从第一个 URL 中提取 course_id，获取整门课程的目录
+        url = args.urls[0] if args.urls else None
+        if not url:
+            url = input("请粘贴课程链接以获取课程目录：\n> ").strip()
+
+        course_id, sub_id = parse_course_url(url)
+        if not course_id:
+            print("链接中缺少 course_id，无法获取课程目录。")
+            return
+
+        print(f"正在获取课程目录（course_id={course_id}）...")
+        browser, context = await create_browser(headless=args.headless)
+        catalogue = await get_course_catalogue(context, course_id)
+        if not catalogue:
+            print("未找到课程目录。")
+            await context.close()
+            await browser.close()
+            return
+
+        print(f"共 {len(catalogue)} 节课\n")
+        for item in catalogue:
+            tasks.append((course_id, item["sub_id"], item.get("title", "")))
+    elif args.urls:
         for url in args.urls:
             course_id, sub_id = parse_course_url(url)
             if sub_id:
-                tasks.append((course_id, sub_id))
+                tasks.append((course_id, sub_id, ""))
             else:
                 print(f"无法解析链接：{url}")
     else:
@@ -77,22 +78,20 @@ async def cmd_get(args):
         if not sub_id:
             print("无法从链接中解析课程信息，请检查链接是否正确。")
             return
-        tasks.append((course_id, sub_id))
+        tasks.append((course_id, sub_id, ""))
 
-    browser, context = await create_browser(headless=args.headless)
+    if not args.all:
+        browser, context = await create_browser(headless=args.headless)
 
     success = 0
     failed = 0
-    for i, (course_id, sub_id) in enumerate(tasks, 1):
-        label = sub_id
-        print(f"[{i}/{len(tasks)}] 正在获取课程 {label} 的字幕...")
+    for i, (course_id, sub_id, title) in enumerate(tasks, 1):
+        label = f"{title} ({sub_id})" if title else sub_id
+        print(f"[{i}/{len(tasks)}] {label}")
         try:
             data = await intercept_subtitle(context, sub_id, course_id=course_id)
             json_path, srt_path, txt_path = save_subtitle(data, sub_id)
             print(f"  成功！共 {len(data)} 条字幕")
-            print(f"  JSON: {json_path}")
-            print(f"  SRT:  {srt_path}")
-            print(f"  TXT:  {txt_path}")
             success += 1
         except Exception as e:
             print(f"  失败: {e}")
@@ -109,18 +108,15 @@ def main():
 
     subparsers.add_parser("login", help="扫码登录华园视频")
 
-    subparsers.add_parser("courses", help="列出所有课程")
-
     get_parser = subparsers.add_parser("get", help="获取课程字幕")
     get_parser.add_argument("urls", nargs="*", help="课程链接（支持多个）")
+    get_parser.add_argument("--all", action="store_true", help="批量导出整门课程所有课时字幕")
     get_parser.add_argument("--headless", action="store_true", help="无头模式运行（不显示浏览器窗口）")
 
     args = parser.parse_args()
 
     if args.command == "login":
         asyncio.run(cmd_login(args))
-    elif args.command == "courses":
-        asyncio.run(cmd_courses(args))
     elif args.command == "get":
         asyncio.run(cmd_get(args))
     else:
