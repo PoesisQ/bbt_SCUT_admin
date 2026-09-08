@@ -16,7 +16,7 @@ function paintScene(state={}){
   if(inspection&&!view.recording){$("course").textContent=inspection.lesson.course_title;$("lesson").textContent=inspection.lesson.title;$("source").textContent=view.replay?"回放已就绪":String(inspection.status)==="1"?"直播中":"等待回放";}
 }
 if(!globalThis.chrome?.runtime?.id||new URLSearchParams(location.search).get("preview")==="1"){
-  document.body.classList.add("demo");document.title="扩展外观预览 · SCUT 课堂助手";
+  if(new URLSearchParams(location.search).get("frame")!=="popup"){document.documentElement.classList.add("popup-preview");document.body.classList.add("demo");}document.title="扩展外观预览 · SCUT 课堂助手";
   const sample=new URLSearchParams(location.search).get("scene")||"replay";
   inspection={status:sample==="replay"?"6":"1",lesson:{course_title:"神经科学",title:"2026-09-02 · 第 5–6 节"}};connected=true;
   paintScene({recording:sample==="recording"});$("connection").textContent="外观预览";
@@ -64,7 +64,7 @@ $("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Err
 (async()=>{preferences=await chrome.storage.local.get({analysisDefault:true,autoOpenAssistant:true});$("analysis").checked=V.analysisEnabled(preferences,null);$("auto-open").checked=preferences.autoOpenAssistant;
   const sourceTab=Number(new URLSearchParams(location.search).get("tab"));
   if(sourceTab>0)tab=await chrome.tabs.get(sourceTab);else [tab]=await chrome.tabs.query({active:true,currentWindow:true});
-  try{inspection=await A.send("INSPECT",{tabId:tab.id});$("course").textContent=inspection.lesson.course_title;$("lesson").textContent=inspection.lesson.title;$("source").textContent=inspection.status==="1"?"直播中 · 自动识别中英文课堂":inspection.status==="6"?"回放已就绪":"回放可能尚未就绪";}catch(e){$("course").textContent="请打开课程播放页面";$("lesson").textContent=e.message;$("start").disabled=true;$("process").disabled=true;}
+  try{inspection=await A.send("INSPECT",{tabId:tab.id});$("course").textContent=inspection.lesson.course_title;$("lesson").textContent=inspection.lesson.title;$("source").textContent=inspection.status==="1"?"直播中 · 自动识别中英文课堂":inspection.status==="6"?"回放已就绪":"回放可能尚未就绪";}catch(e){$("course").textContent="选择一节课";$("source").textContent="尚未选择";$("lesson").textContent="进入具体课时的播放页后，可开始字幕或整理回放。";$("start").disabled=true;$("process").disabled=true;}
   try{const h=await A.api("/api/health");connected=true;configured=h.deepseek_configured;$("connection").textContent="本地已连接";$("connection").className="chip";if(!configured)show("智能分析默认开启；配置 Key 后生效。现在仍可使用本地字幕。");}catch(e){$("connection").textContent="待连接";show("请启动本地服务，在偏好设置中粘贴连接口令。",true);}
   $("process").disabled=!connected||!inspection||["1","2","3","5","9"].includes(String(inspection.status));
   await recorder();setInterval(()=>void recorder(),1500);

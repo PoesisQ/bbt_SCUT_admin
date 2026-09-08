@@ -39,11 +39,11 @@ test("school content scripts cannot start capture or retrieve the local pairing 
   assert.equal(await h.send({type:"START_CAPTURE",tabId:7},{content:true}),null);assert.equal(h.requests.length,0);
 });
 
-test("automatic school entry opens once, respects opt-out, and never starts capture",async()=>{
+test("automatic school entry stays in-page even after repeated ready messages, and respects opt-out",async()=>{
   const h=harness();let opens=0;h.context.chrome.action.openPopup=async()=>{opens++;};
   const result=await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});
-  assert.equal(result.ok,true,result.error);assert.equal(result.data.popupOpened,true);assert.equal(opens,1);
-  await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});assert.equal(opens,1);
+  assert.equal(result.ok,true,result.error);assert.equal(result.data.popupOpened,false);assert.equal(result.data.expandOnLoad,true);assert.equal(opens,0);
+  for(let i=0;i<20;i++)await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});assert.equal(opens,0);
   await h.send({type:"SET_SITE_ENTRY_PREF",enabled:false},{content:true});
   assert.equal((await h.send({type:"PAGE_ASSISTANT_READY"},{content:true})).data.autoOpen,false);
   assert.equal(h.documents.length,0);assert.equal(h.recorder.length,0);
@@ -56,7 +56,7 @@ test("older browsers and inactive tabs retain a page entry without stealing focu
   h.context.chrome.action.openPopup=async()=>{throw Error("must not open");};
   h.context.chrome.tabs.get=async id=>({id,windowId:2,active:false});
   result=await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});
-  assert.equal(result.data.popupOpened,false);assert.equal(h.recorder.length,0);
+  assert.equal(result.data.popupOpened,false);assert.equal(result.data.expandOnLoad,false);assert.equal(h.recorder.length,0);
 });
 test("capture lifetime is in offscreen and persistent session storage, independent of the popup",async()=>{
   const h=harness();const result=await h.send({type:"START_CAPTURE",tabId:7,analysis:false});
@@ -105,4 +105,10 @@ test("batch import persists completed entries and passes replay source only to t
   const create=h.requests.find(r=>r.url.endsWith("/api/sessions"));const body=JSON.parse(create.body);
   assert.equal(body.mode,"replay");assert.equal(body.source_url,"https://video.jw.scut.edu.cn/play/a.mp4");
   assert.equal(body.sub_id,"686882");assert.ok(body.request_id);
+});
+
+test("only an explicit open action opens the browser popup",async()=>{
+ const h=harness();let opens=0;h.context.chrome.action.openPopup=async()=>{opens++;};
+ const result=await h.send({type:"OPEN_ASSISTANT"},{content:true});
+ assert.equal(result.ok,true);assert.equal(opens,1);assert.equal(h.documents.length,0);
 });

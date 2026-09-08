@@ -33,10 +33,9 @@ async function recorderState(){
 async function installOverlay(tabId){await chrome.scripting.executeScript({target:{tabId},files:["session-view.js","overlay.js"]});}
 
 function schoolPage(url){try{return ["https://video.jw.scut.edu.cn","https://video-jw-443.webvpn.scut.edu.cn"].includes(new URL(url).origin);}catch{return false;}}
-async function openAssistant(tab,automatic=false){
+async function openAssistant(tab){
   // Current Chromium supports opening the action; older builds use the page entry.
   if(chrome.action.openPopup){try{await chrome.action.openPopup({windowId:tab.windowId});return true;}catch{ /* Keep the in-page fallback accessible. */ }}
-  if(automatic)return false;
   const url=chrome.runtime.getURL("study-popup.html?tab="+tab.id);
   const saved=await chrome.storage.session.get("controlWindow");
   if(saved.controlWindow){try{const window=await chrome.windows.get(saved.controlWindow,{populate:true});
@@ -156,14 +155,12 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         const capture=await activeCapture();
         let connected=false,course="";
         try{const sessions=await A.api("/api/sessions");connected=true;const id=new URL(sender.tab.url).searchParams.get("course_id");course=sessions.find(s=>s.course_id===id)?.course_title||"";}catch{ /* Entry remains usable before pairing. */ }
-        let popupOpened=false;
-        const tab=await chrome.tabs.get(sender.tab.id),key="auto-open-"+tab.windowId;
-        const previous=(await chrome.storage.session.get(key))[key]||0;
+        // Automatic entry stays inside the page. Never reopen a browser action window
+        // on navigation, hash changes, or a late content-script response.
+        const tab=await chrome.tabs.get(sender.tab.id);
         const window=await chrome.windows.get(tab.windowId);
-        if(autoOpenAssistant&&tab.active&&window.focused&&Date.now()-previous>45000){
-          await chrome.storage.session.set({[key]:Date.now()});popupOpened=await openAssistant(tab,true);
-        }
-        return {autoOpen:autoOpenAssistant,popupOpened,connected,course,recording:!!capture};
+        return {autoOpen:autoOpenAssistant,expandOnLoad:autoOpenAssistant&&tab.active&&window.focused,
+                popupOpened:false,connected,course,recording:!!capture};
       }
       case "SET_SITE_ENTRY_PREF":
         if(typeof message.enabled!=="boolean")throw new Error("无效显示偏好");
