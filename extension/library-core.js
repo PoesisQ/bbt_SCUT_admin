@@ -21,6 +21,7 @@
     if(busy(s))return {label:`正在整理 ${s.analysis_progress || ""}`.trim(),disabled:true};
     if(!configured)return {label:"设置分析 Key",settings:true};
     if(!s.segment_count)return {label:"暂无可分析字幕",disabled:true};
+    if(hasNotes(s)&&!s.events_version)return {label:"整理完整事项"};
     if(hasNotes(s))return {label:"笔记已就绪",hidden:true};
     return {label:s.analysis_status === "failed" || s.summary?.partial ? "继续生成笔记" : "生成本课笔记"};
   }

@@ -1,0 +1,10 @@
+const assert=require("node:assert/strict"),P=require("./popup-state.js");
+assert.equal(P.scene({status:"6"}).name,"replay");
+assert.equal(P.scene({status:"6"}).importable,true);
+assert.equal(P.scene({status:"6"},{recording:true}).name,"recording");
+assert.equal(P.scene({status:"6"},{recording:true}).importable,false);
+assert.equal(P.scene({status:"6"},{pending:2}).importable,false);
+assert.equal(P.scene(null).importable,false);
+assert.equal(P.scene({status:"1"}).importable,false);
+assert.equal(P.scene({status:"1"}).startLabel,"开始实时字幕");
+console.log("PASS popup scene: replay, live, background capture, upload and missing lesson");

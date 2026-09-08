@@ -14,6 +14,11 @@ from assistant_service.store import Store
 
 
 class AnalysisRecoveryTests(unittest.TestCase):
+    def setUp(self):
+        mock = patch.object(Analyzer, "consolidate", return_value=[])
+        mock.start()
+        self.addCleanup(mock.stop)
+
     def test_short_school_subtitles_are_bounded_without_omission(self):
         segments = [{"id": f"long-database-id-{i}", "start": i, "end": i + 1, "text": "操作系统"} for i in range(1418)]
         packs = analysis_packs(segments)

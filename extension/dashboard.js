@@ -70,7 +70,7 @@ function renderDetail(){
   $("detail-warning").textContent=[...new Set(warning)].join("\n");$("detail-warning").hidden=!warning.length;
   const busy=L.busy(detail),partial=!!detail.summary?.partial;
   $("analysis-progress").hidden=!busy&&!partial;
-  $("progress-text").textContent=(busy?(detail.analysis_stage==="outline"?"生成整课概览":"正在整理"):"已保存部分笔记")+" · "+(detail.analysis_done||0)+" / "+(detail.analysis_total||"?")+" 段";
+  $("progress-text").textContent=detail.analysis_stage==="events"&&busy?"通读全文，合并同一事项的任务、时间与要求":(busy?(detail.analysis_stage==="outline"?"生成整课概览":"正在整理"):"已保存部分笔记")+" · "+(detail.analysis_done||0)+" / "+(detail.analysis_total||"?")+" 段";
   $("progress-model").textContent=detail.analysis_model||"";
   $("progress-bar").max=detail.analysis_total||1;$("progress-bar").value=detail.analysis_done||0;
   const summary=$("view-summary");summary.replaceChildren();
@@ -95,8 +95,23 @@ function renderDetail(){
     summary.append(empty);
   }
   const events=$("view-events");events.replaceChildren();
-  for(const e of detail.events){const card=node("article",undefined,"topic-note"),top=node("header");top.append(node("strong",e.label),seek(e.start));card.append(top,node("p",e.message),node("blockquote",e.evidence),node("small",e.source==="deepseek"?"DeepSeek 分析 · 请核对原文":"关键词匹配 · 尚未经模型核对"));events.append(card);}
-  if(!detail.events.length)events.append(node("p","本课尚无已识别的重要事项。","library-empty"));
+  const confirmed=detail.events.filter(e=>e.source==="deepseek");
+  events.append(node("p",detail.events_version?"已结合全文整理。同一事项的补充说明合并显示，点击出处可核对原话。":"这是旧版或课堂中的即时分析。点击“整理完整事项”，结合全文重新核对作业与要求。","overview-intro"));
+  for(const e of confirmed){const card=node("article",undefined,"topic-note event-note"),top=node("header");top.append(node("strong",e.label),seek(e.start));card.append(top,node("h3",e.message));
+    const facts=node("dl",undefined,"event-facts");
+    for(const [key,label] of [["action","任务"],["deadline","时间"],["submission","提交方式"],["requirements","具体要求"],["grading","评分"]]){
+      const value=e.details?.[key];if(value){facts.append(node("dt",label),node("dd",value));}
+    }card.append(facts);
+    const source=node("details",undefined,"event-source");source.append(node("summary","查看原文与上下文"));
+    const ids=new Set(e.segment_ids),positions=detail.segments.map((s,i)=>ids.has(s.id)?i:-1).filter(i=>i>=0),included=new Set(positions.flatMap(i=>Array.from({length:7},(_,n)=>i+n-3).filter(n=>n>=0&&n<detail.segments.length)));
+    if(!positions.length)for(const q of e.evidence_quotes||[e.evidence])source.append(node("blockquote",q));
+    else source.append(node("small","深色为引用句，浅色为前后文。"));
+    for(const i of [...included].sort((a,b)=>a-b)){const s=detail.segments[i],line=node("div",undefined,"event-context"+(ids.has(s.id)?" cited":""));line.append(seek(s.start),node("span",SessionView.clean(s)));source.append(line);}
+    card.append(source);events.append(card);
+  }
+  if(!confirmed.length)events.append(node("p",detail.events_version?"通读本课字幕后，未提取到明确的作业、测验或其他课堂事项。":"尚未整理出明确事项。关键词初筛记录可在下方展开查看。","library-empty"));
+  const candidates=detail.rule_candidates||detail.events.filter(e=>e.source==="local_rule");
+  if(candidates.length){const initial=node("details",undefined,"rule-candidates");initial.append(node("summary","关键词初筛 · "+candidates.length+" 处（不代表有任务）"));for(const e of candidates){const p=node("p");p.append(seek(e.start),document.createTextNode(" "+e.evidence));initial.append(p);}events.append(initial);}
   const transcript=$("view-transcript"),scroll=transcript.scrollTop;transcript.replaceChildren();
   for(const s of detail.segments){const el=node("div",undefined,"segment");el.append(seek(s.start),node("span",SessionView.clean(s)));transcript.append(el);}transcript.scrollTop=scroll;
   renderAction();

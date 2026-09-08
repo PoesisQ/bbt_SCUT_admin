@@ -2,26 +2,42 @@
 const A=AssistantClient,V=SessionView,$=id=>document.getElementById(id);
 let tab,inspection,connected=false,reading=false,editing=false,configured=false,activeSession=null,preferences={analysisDefault:true},acting=new Set();
 function show(text,error=false){$("message").textContent=text;$("message").className="notice"+(error?" error":"");}
+function paintScene(state={}){
+  const view=PopupState.scene(inspection,state);document.body.dataset.scene=view.name;
+  document.body.classList.toggle("is-recording",view.recording);
+  $("scene-label").textContent=view.title;$("start-label").textContent=view.startLabel;
+  $("action-hint").textContent=view.hint;$("action-hint").hidden=view.recording;
+  $("start").classList.toggle("primary",!view.replay);$("process").classList.toggle("primary",view.replay);
+  $("process").disabled=!connected||!view.importable||acting.has("process");
+  $("lifecycle-note").hidden=!view.recording;
+  $("recorder").parentElement.hidden=!view.recording&&!state.pending&&!state.error;
+  $("start").hidden=view.recording;$("stop").hidden=!view.recording;
+  $("expand-room").hidden=!view.recording;
+  if(inspection&&!view.recording){$("course").textContent=inspection.lesson.course_title;$("lesson").textContent=inspection.lesson.title;$("source").textContent=view.replay?"回放已就绪":String(inspection.status)==="1"?"直播中":"等待回放";}
+}
 if(!globalThis.chrome?.runtime?.id||new URLSearchParams(location.search).get("preview")==="1"){
   document.body.classList.add("demo");document.title="扩展外观预览 · SCUT 课堂助手";
-  $("connection").textContent="外观预览";$("course").textContent="你的下一节课";$("lesson").textContent="连续字幕、当前模型与课堂重点，展开后一直可见。";$("source").textContent="此处为界面示意，不会捕获声音。";
+  const sample=new URLSearchParams(location.search).get("scene")||"replay";
+  inspection={status:sample==="replay"?"6":"1",lesson:{course_title:"神经科学",title:"2026-09-02 · 第 5–6 节"}};connected=true;
+  paintScene({recording:sample==="recording"});$("connection").textContent="外观预览";
+  if(sample==="recording"){$("course").textContent=inspection.lesson.course_title;$("lesson").textContent=inspection.lesson.title;$("source").textContent="正在录音";$("live-context").hidden=false;V.paint($("live-sentences"),[{id:"demo1",start:4,end:9,text:"这个视频介绍了不同脑区的功能。"},{id:"demo2",start:9,end:14,text:"看完以后，把记住的名词和解释写下来。"}],true);}
   for(const id of ["start","stop","process","recover","analysis","legacy"])$(id).disabled=true;
   $("analysis").checked=true;$("dashboard").onclick=()=>location.href="dashboard.html";$("options").onclick=()=>location.href="options.html";
-  $("expand-room").onclick=()=>location.href="classroom.html";$("recorder").textContent="预览不会启动录音";return;
+  $("expand-room").onclick=()=>location.href="classroom.html";$("recorder").textContent="示例字幕 · 未启动录音";return;
 }
 async function action(id,fn){acting.add(id);$(id).disabled=true;try{await fn();}catch(e){show(e.message,true);}finally{acting.delete(id);$(id).disabled=false;await recorder();}}
 async function recorder(){
   if(reading)return;reading=true;
   try{const state=await A.send("RECORDER_STATE");const running=!!state?.recording;
-    document.body.classList.toggle("is-recording",running);
-    $("expand-room").textContent=running?"返回正在录音的课堂 ↗":"打开课堂实况 ↗";
+    paintScene(state||{});
+    $("expand-room").textContent=running?"返回课堂实况 ↗":"查看上次课堂 ↗";
     $("expand-room").classList.toggle("primary",running);
-    $("lifecycle-note").textContent=running?"录音在后台继续。点这里查看，不会重启。":"关闭窗口不结束录音；再次点击扩展即可回来。";
+    $("lifecycle-note").textContent="关掉面板后，录音继续。再次点击图标即可回来。";
     $("start").hidden=running;$("stop").hidden=!running;
-    $("expand-room").hidden=!running&&!state?.sid;
-    if(state?.sid){activeSession=await A.api("/api/sessions/"+state.sid);if(!editing)$("analysis").checked=V.analysisEnabled(preferences,activeSession);$("course").textContent=activeSession.course_title;$("lesson").textContent=activeSession.title;
-      $("live-context").hidden=!activeSession.segments.length;V.paint($("live-sentences"),activeSession.segments.slice(-4),true);
-      if(running)$("source").textContent="后台正在录音 · 打开面板不会重启课堂";
+    $("expand-room").hidden=!running;
+    if(state?.sid){activeSession=await A.api("/api/sessions/"+state.sid);if(!editing)$("analysis").checked=V.analysisEnabled(preferences,running?activeSession:null);
+      $("live-context").hidden=!running||!activeSession.segments.length;V.paint($("live-sentences"),activeSession.segments.slice(-4),true);
+      if(running){$("course").textContent=activeSession.course_title;$("lesson").textContent=activeSession.title;$("source").textContent="正在录音";}
     }else {activeSession=null;$("live-context").hidden=true;if(!editing)$("analysis").checked=V.analysisEnabled(preferences,null);}
     $("recorder").textContent=state?.error||(running?"正在听课 · 待上传 "+(state.pending||0)+" 段":state?.pending?"正在补传 "+state.pending+" 段":"当前没有录音 · 历史字幕在课程笔记中");
     if(!acting.has("stop"))$("stop").disabled=!running;
@@ -35,7 +51,7 @@ $("dashboard").onclick=()=>A.openDashboard(null,tab?.id);
 $("session-detail").onclick=()=>A.openDashboard(activeSession?.id,tab?.id);
 $("expand-room").onclick=()=>action("expand-room",()=>A.openClassroom(tab?.id));
 $("analysis").onchange=async()=>{editing=true;const wanted=$("analysis").checked;
-  try{if(activeSession)await A.api("/api/sessions/"+activeSession.id+"/analysis-preference",{method:"POST",body:{enabled:wanted}});
+  try{if(activeSession&&!activeSession.stopped)await A.api("/api/sessions/"+activeSession.id+"/analysis-preference",{method:"POST",body:{enabled:wanted}});
     preferences.analysisDefault=wanted;await chrome.storage.local.set({analysisDefault:wanted});
     show(wanted?"智能分析已开启，并记住下次的选择。":"后续智能分析已关闭，字幕照常保存。");
   }catch(e){$("analysis").checked=!wanted;show(e.message,true);}finally{editing=false;await recorder();}

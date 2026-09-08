@@ -8,7 +8,7 @@ import threading
 import time
 from pathlib import Path
 
-from .analysis import Analyzer, analysis_packs, merge_events, rule_events
+from .analysis import Analyzer, AnalysisPaused, analysis_packs, merge_events, rule_events
 from .settings import atomic_json
 from .asr import Transcriber, validate_wav, repetitive_segments
 from .media import Downloader, decode, split_wav
@@ -75,6 +75,8 @@ class Manager:
         try:
             self.run(job)
             self.store.finish(job["id"])
+        except AnalysisPaused:
+            self.store.finish(job["id"])
         except Exception as exc:
             # Do not include URLs, authorization headers or third-party bodies in errors.
             error = str(exc) if isinstance(exc, ValueError) else f"{type(exc).__name__}：处理失败，请检查本地配置后重试"
@@ -125,6 +127,7 @@ class Manager:
             self.store.update(sid, stopped=True, progress="音轨已就绪，按顺序转写")
         elif kind in {"analyze", "summary"}:
             session = self.store.get(sid)
+            saved_summary = session.get("summary")
             reset_at = session.get("analysis_reset_at", 0)
             if job.get("created", time.time()) < reset_at:
                 return
@@ -175,7 +178,9 @@ class Manager:
                     partial = {"summary": {"overview": "\n\n".join(overviews), "topics": topics,
                                "sections": sections, "source": "deepseek", "partial": True},
                                "analysis_done": index + 1, "analysis_total": len(packs)} if kind == "summary" else {}
-                    self.store.update(sid, events=merge_events(session["events"], result["events"]),
+                    if saved_summary and not saved_summary.get("partial"):
+                        partial.pop("summary", None)  # Keep the readable old notes during a refresh.
+                    self.store.update(sid, events=(merge_events(session["events"], result["events"]) if kind == "analyze" else session["events"]),
                                       analysis_progress=f"{index + 1}/{len(packs)}", **partial)
                 if kind == "summary":
                     while urgent := self.store.claim("analysis", max_priority=0):
@@ -193,13 +198,32 @@ class Manager:
                     atomic_json(checkpoint, completed)
                 if self.settings.data["deepseek_model"] != model:
                     raise ValueError("分析模型已切换，请点击继续生成笔记，使用新模型整理本课")
+                def check_context():
+                    current = self.store.get(sid)
+                    if current["status"] == "cancelled" or current.get("analysis_reset_at", 0) != reset_at or self.shutdown.is_set():
+                        raise AnalysisPaused()
+                    if current.get("analysis", True) is False:
+                        self.store.update(sid, analysis_status="paused")
+                        raise AnalysisPaused()
+                    if self.settings.data["deepseek_model"] != model:
+                        raise ValueError("分析模型已切换，请使用新模型继续整理本课")
+
+                check_context()
+                self.store.update(sid, analysis_progress="通读全文，合并作业与要求", analysis_stage="events")
+                event_cache = completed.setdefault("context-events-v3", {})
+                events = self.analyzer.consolidate(segments, checkpoint=event_cache,
+                                                  save=lambda: atomic_json(checkpoint, completed), check=check_context)
+                check_context()
+                # Commit the new semantic list only after the entire pass succeeds.
+                # Keep keyword hits for inspection, but never present them as finished notes.
+                update.update(events=events, rule_candidates=rule_events(segments), events_version=3)
                 update["summary"] = {"overview": "\n\n".join(overviews), "topics": topics, "sections": sections,
                                      "source": "deepseek", "partial": False, "headline": outline["title"],
                                      "abstract": outline["overview"], "groups": outline["groups"]}
                 update.update(analysis_progress=f"{len(packs)}/{len(packs)}", analysis_stage="complete")
             with self.store.lock:
                 current = self.store.get(sid)
-                if current.get("analysis_reset_at", 0) == reset_at and current["status"] != "cancelled":
+                if current.get("analysis_reset_at", 0) == reset_at and current["status"] != "cancelled" and current.get("analysis", True):
                     self.store.update(sid, **update)
 
     def maybe_analyze(self, sid):
@@ -213,7 +237,7 @@ class Manager:
             return
         if self.store.pending(sid, "analysis"):
             return
-        self.store.enqueue(sid, "analyze", {"start": max(0, session["last_analysis_end"] - 15), "end": end},
+        self.store.enqueue(sid, "analyze", {"start": max(0, session["last_analysis_end"] - 90), "end": end},
                            lane="analysis", priority=0)
         self.store.update(sid, last_analysis_end=end)
 

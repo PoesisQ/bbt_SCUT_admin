@@ -96,8 +96,18 @@ class Store:
                 lines += [f"- [{topic.get('start', 0):.0f}s] {topic['title']} · {topic.get('chapter') or '未明确章节'}：{topic.get('detail', '')}"]
         lines += ["", "## 重点提醒（请核对原文）"]
         for event in value["events"]:
+            if event.get("source") == "local_rule":
+                continue
             lines += [f"- [{event['start']:.0f}s] **{event['label']}** {event['message']} ({event['source']})",
+                      *[f"  {label}：{event['details'][key]}" for key, label in
+                        (("action", "任务"), ("deadline", "时间"), ("submission", "提交方式"),
+                         ("requirements", "具体要求"), ("grading", "评分")) if event.get("details", {}).get(key)],
                       f"  原文：{event['evidence']}"]
+        candidates = value.get("rule_candidates", [e for e in value["events"] if e.get("source") == "local_rule"])
+        if candidates:
+            lines += ["", "<details><summary>关键词初筛记录（不是已确认事项）</summary>", ""]
+            lines += [f"- [{e['start']:.0f}s] {e['evidence']}" for e in candidates]
+            lines += ["", "</details>"]
         if value.get("warning"):
             lines += ["", "提示：" + value["warning"]]
         (directory / "notes.md").write_text("\n".join(lines), encoding="utf-8")

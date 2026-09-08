@@ -137,7 +137,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.6.0"}
+        return {"app": "scut-local-assistant", "version": "0.7.0"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -183,9 +183,9 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/api/sessions")
     def sessions():
-        return [{k: v for k, v in s.items() if k not in {"segments", "events"}} |
+        return [{k: v for k, v in s.items() if k not in {"segments", "events", "rule_candidates"}} |
                 {"segment_count": len(s["segments"]), "event_count": len(s["events"]),
-                 "important_events": [e for e in s["events"] if e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in store.list()]
+                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in store.list()]
 
     @app.post("/api/sessions")
     def create(lesson: Lesson):
@@ -365,7 +365,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/{name}")
     def asset(name: str):
-        if name not in {"dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
+        if name not in {"dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)
         response = FileResponse(ROOT / "extension" / name)
         if name.endswith(".html"):
