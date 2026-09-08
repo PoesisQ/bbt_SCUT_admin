@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import math
+import hashlib
 import json
 import re
 import threading
 import time
 from pathlib import Path
 
-from .analysis import Analyzer, merge_events, rule_events
+from .analysis import Analyzer, analysis_packs, merge_events, rule_events
+from .settings import atomic_json
 from .asr import Transcriber, validate_wav, repetitive_segments
 from .media import Downloader, decode, split_wav
 
@@ -126,43 +128,78 @@ class Manager:
             reset_at = session.get("analysis_reset_at", 0)
             if job.get("created", time.time()) < reset_at:
                 return
-            self.store.update(sid, analysis_status="running")
+            self.store.update(sid, analysis_status="running", analysis_stage="segments", warning="")
             segments = [s for s in session["segments"] if s.get("quality") != "uncertain"]
             if kind == "analyze":
                 segments = [s for s in segments if payload["start"] <= s["end"] <= payload["end"]]
                 packs = [segments]
             else:
-                # Bounded map steps preserve the entire lecture without silently truncating it.
-                packs, current, size = [], [], 0
-                for segment in segments:
-                    if current and size + len(segment["text"]) > 6500:
-                        packs.append(current)
-                        current, size = [], 0
-                    current.append(segment)
-                    size += len(segment["text"])
-                if current:
-                    packs.append(current)
-            overviews, topics = [], []
+                packs = analysis_packs(segments)
+            model = self.settings.data["deepseek_model"]
+            fingerprint = hashlib.sha256(json.dumps(["summary-v2", model, reset_at, segments], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+            checkpoint = self.store.directory(sid) / "analysis-cache" / (fingerprint + ".json")
+            completed = {}
+            if kind == "summary" and checkpoint.exists():
+                try:
+                    completed = json.loads(checkpoint.read_text(encoding="utf-8"))
+                except (ValueError, OSError):
+                    completed = {}
+            overviews, topics, sections = [], [], []
+            if kind == "summary":
+                done = sum(str(i) in completed for i in range(len(packs)))
+                self.store.update(sid, analysis_done=done, analysis_total=len(packs),
+                                  analysis_progress=f"{done}/{len(packs)}", analysis_model=model)
             for index, pack in enumerate(packs):
                 if self.store.get(sid)["status"] == "cancelled" or self.shutdown.is_set():
                     return
-                result = self.analyzer.analyze(pack, summary=kind == "summary")
-                with self.store.lock:
-                    session = self.store.get(sid)
-                    if session.get("analysis_reset_at", 0) != reset_at:
-                        return  # The user started a transcription repair; this response is stale.
-                    self.store.update(sid, events=merge_events(session["events"], result["events"]),
-                                      analysis_progress=f"{index + 1}/{len(packs)}")
+                if self.store.get(sid).get("analysis", True) is False:
+                    self.store.update(sid, analysis_status="paused")
+                    return
+                if self.settings.data["deepseek_model"] != model:
+                    raise ValueError("分析模型已切换，请点击继续生成笔记，使用新模型整理本课")
+                result = completed.get(str(index))
+                if result is None:
+                    result = self.analyzer.analyze(pack, summary=kind == "summary")
+                if self.settings.data["deepseek_model"] != model:
+                    raise ValueError("分析模型已切换，请点击继续生成笔记，使用新模型整理本课")
+                if kind == "summary":
+                    completed[str(index)] = result
+                    atomic_json(checkpoint, completed)
                 topics.extend(result["topics"])
                 overviews.append(result["overview"])
+                sections.append({"start": pack[0]["start"], "end": pack[-1]["end"], "overview": result["overview"]})
+                with self.store.lock:
+                    session = self.store.get(sid)
+                    if session.get("analysis_reset_at", 0) != reset_at or session["status"] == "cancelled":
+                        return  # The user started a transcription repair; this response is stale.
+                    partial = {"summary": {"overview": "\n\n".join(overviews), "topics": topics,
+                               "sections": sections, "source": "deepseek", "partial": True},
+                               "analysis_done": index + 1, "analysis_total": len(packs)} if kind == "summary" else {}
+                    self.store.update(sid, events=merge_events(session["events"], result["events"]),
+                                      analysis_progress=f"{index + 1}/{len(packs)}", **partial)
                 if kind == "summary":
                     while urgent := self.store.claim("analysis", max_priority=0):
                         self.execute(urgent)
             update = {"analysis_status": "complete", "warning": ""}
             if kind == "summary":
-                update["summary"] = {"overview": "\n\n".join(overviews), "topics": topics, "source": "deepseek"}
+                if self.store.get(sid).get("analysis", True) is False:
+                    self.store.update(sid, analysis_status="paused")
+                    return
+                self.store.update(sid, analysis_progress="生成整课概览", analysis_stage="outline")
+                outline = completed.get("outline")
+                if outline is None:
+                    outline = self.analyzer.synthesize(topics)
+                    completed["outline"] = outline
+                    atomic_json(checkpoint, completed)
+                if self.settings.data["deepseek_model"] != model:
+                    raise ValueError("分析模型已切换，请点击继续生成笔记，使用新模型整理本课")
+                update["summary"] = {"overview": "\n\n".join(overviews), "topics": topics, "sections": sections,
+                                     "source": "deepseek", "partial": False, "headline": outline["title"],
+                                     "abstract": outline["overview"], "groups": outline["groups"]}
+                update.update(analysis_progress=f"{len(packs)}/{len(packs)}", analysis_stage="complete")
             with self.store.lock:
-                if self.store.get(sid).get("analysis_reset_at", 0) == reset_at:
+                current = self.store.get(sid)
+                if current.get("analysis_reset_at", 0) == reset_at and current["status"] != "cancelled":
                     self.store.update(sid, **update)
 
     def maybe_analyze(self, sid):

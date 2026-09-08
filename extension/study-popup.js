@@ -18,11 +18,12 @@ async function recorder(){
     $("expand-room").classList.toggle("primary",running);
     $("lifecycle-note").textContent=running?"录音在后台继续。点这里查看，不会重启。":"关闭窗口不结束录音；再次点击扩展即可回来。";
     $("start").hidden=running;$("stop").hidden=!running;
+    $("expand-room").hidden=!running&&!state?.sid;
     if(state?.sid){activeSession=await A.api("/api/sessions/"+state.sid);if(!editing)$("analysis").checked=V.analysisEnabled(preferences,activeSession);$("course").textContent=activeSession.course_title;$("lesson").textContent=activeSession.title;
       $("live-context").hidden=!activeSession.segments.length;V.paint($("live-sentences"),activeSession.segments.slice(-4),true);
       if(running)$("source").textContent="后台正在录音 · 打开面板不会重启课堂";
     }else {activeSession=null;$("live-context").hidden=true;if(!editing)$("analysis").checked=V.analysisEnabled(preferences,null);}
-    $("recorder").textContent=state?.error||(running?"正在听课 · 待上传 "+(state.pending||0)+" 段":state?.pending?"正在补传 "+state.pending+" 段":"当前没有录音 · 历史字幕在所有课程中");
+    $("recorder").textContent=state?.error||(running?"正在听课 · 待上传 "+(state.pending||0)+" 段":state?.pending?"正在补传 "+state.pending+" 段":"当前没有录音 · 历史字幕在课程笔记中");
     if(!acting.has("stop"))$("stop").disabled=!running;
     if(!acting.has("start"))$("start").disabled=!connected||!inspection||running||!!state?.pending;
     $("analysis").disabled=!configured||editing;
@@ -42,9 +43,11 @@ $("analysis").onchange=async()=>{editing=true;const wanted=$("analysis").checked
 $("start").onclick=()=>action("start",async()=>{await A.send("START_CAPTURE",{tabId:tab.id,analysis:configured&&$("analysis").checked});show("已开始录音。点“返回正在录音的课堂”查看连续字幕。");});
 $("stop").onclick=()=>action("stop",async()=>{const s=await A.send("STOP_CAPTURE");show(s.pending?"正在补传 "+s.pending+" 段音频，请保持本地服务运行。":"录音已结束，剩余字幕和总结会继续保存。");});
 $("recover").onclick=()=>action("recover",async()=>{const s=await A.send("RECOVER_UPLOADS");show(s.error||"待上传音频："+s.pending+" 段",!!s.error);});
-$("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],analysis:configured&&$("analysis").checked,forceAsr:false});show("本节课已加入队列，可在课程空间查看。");});
-(async()=>{preferences=await chrome.storage.local.get({analysisDefault:true});$("analysis").checked=V.analysisEnabled(preferences,null);
-  [tab]=await chrome.tabs.query({active:true,currentWindow:true});
+$("auto-open").onchange=async e=>{await chrome.storage.local.set({autoOpenAssistant:e.target.checked});};
+$("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],analysis:configured&&$("analysis").checked,forceAsr:false});show("本节课已加入队列，可在课程笔记查看。");});
+(async()=>{preferences=await chrome.storage.local.get({analysisDefault:true,autoOpenAssistant:true});$("analysis").checked=V.analysisEnabled(preferences,null);$("auto-open").checked=preferences.autoOpenAssistant;
+  const sourceTab=Number(new URLSearchParams(location.search).get("tab"));
+  if(sourceTab>0)tab=await chrome.tabs.get(sourceTab);else [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   try{inspection=await A.send("INSPECT",{tabId:tab.id});$("course").textContent=inspection.lesson.course_title;$("lesson").textContent=inspection.lesson.title;$("source").textContent=inspection.status==="1"?"直播中 · 自动识别中英文课堂":inspection.status==="6"?"回放已就绪":"回放可能尚未就绪";}catch(e){$("course").textContent="请打开课程播放页面";$("lesson").textContent=e.message;$("start").disabled=true;$("process").disabled=true;}
   try{const h=await A.api("/api/health");connected=true;configured=h.deepseek_configured;$("connection").textContent="本地已连接";$("connection").className="chip";if(!configured)show("智能分析默认开启；配置 Key 后生效。现在仍可使用本地字幕。");}catch(e){$("connection").textContent="待连接";show("请启动本地服务，在偏好设置中粘贴连接口令。",true);}
   $("process").disabled=!connected||!inspection||["1","2","3","5","9"].includes(String(inspection.status));

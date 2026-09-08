@@ -9,7 +9,7 @@ function render(value,state){
   session=value;const active=!!state?.recording||(!extension&&!value.stopped&&value.status==='recording');
   $('room-course').textContent=value.course_title;$('room-lesson').textContent=value.title;
   $('room-details').href=A.dashboardURL(value.id,sourceTab);
-  $('room-lifecycle').textContent=active?'关窗或最小化，录音继续。再点浏览器中的助手即可回来。':'字幕已保留。点“本课详情与总结”查看，或到所有课程找历史记录。';
+  $('room-lifecycle').textContent=active?'关窗或最小化，录音继续。再点浏览器中的助手即可回来。':'字幕已保留。点“本课详情与总结”查看，或到课程笔记找历史记录。';
   $('room-status').textContent=active?'正在听课':value.stopped?'已结束 · 已保存':'等待音频';$('room-status').className='chip'+(active?' room-status-live':'');
   $('room-count').textContent=value.segments.length+' 条字幕';$('room-clock').textContent=V.time(value.segments.at(-1)?.end||0);
   if(!editing)$('room-analysis').checked=!!value.analysis;
@@ -37,9 +37,9 @@ $('room-model').onchange=async()=>{const select=$('room-model');select.disabled=
 $('room-stop').onclick=async()=>{$('room-stop').disabled=true;try{await A.send('STOP_CAPTURE');message('录音已结束，剩余字幕与总结会继续保存。');await refresh();}catch(e){message(e.message,true);}};
 $('room-export').onclick=()=>A.download(sid).catch(e=>message(e.message,true));
 $('room-overlay').hidden=!extension;
-$('room-overlay').onclick=async()=>{try{const {activeCapture}=await chrome.storage.session.get('activeCapture');if(!activeCapture?.tabId)throw new Error('当前没有正在录音的课程。回放字幕请在课程空间中附加。');await chrome.scripting.executeScript({target:{tabId:activeCapture.tabId},files:['session-view.js','overlay.js']});AssistantUI.toast('已同步课堂字幕浮层');}catch(e){message(e.message,true);}};
+$('room-overlay').onclick=async()=>{try{const {activeCapture}=await chrome.storage.session.get('activeCapture');if(!activeCapture?.tabId)throw new Error('当前没有正在录音的课程。回放字幕请在课程笔记中附加。');await chrome.scripting.executeScript({target:{tabId:activeCapture.tabId},files:['session-view.js','overlay.js']});AssistantUI.toast('已同步课堂字幕浮层');}catch(e){message(e.message,true);}};
 $('minimize').onclick=async()=>{if(!extension){location.href='dashboard.html';return;}try{const win=await chrome.windows.getCurrent();if(win.type==='popup'){await chrome.windows.update(win.id,{state:'minimized'});}else if(sourceTab){const tab=await chrome.tabs.update(sourceTab,{active:true});await chrome.windows.update(tab.windowId,{focused:true});}else{message('从扩展面板点击「打开课堂实况」，即可使用独立窗口和最小化。');}}catch(e){message(e.message,true);}};
-if(!extension){$('minimize').title='返回课程空间';$('minimize').setAttribute('aria-label','返回课程空间');}
+if(!extension){$('minimize').title='返回课程笔记';$('minimize').setAttribute('aria-label','返回课程笔记');}
 window.addEventListener('focus',()=>void preferences().then(refresh).catch(e=>message(e.message,true)));
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)void refresh();});
 (async()=>{try{await preferences();await refresh();}catch(e){message(e.message,true);}setInterval(()=>void refresh(),1500);})();

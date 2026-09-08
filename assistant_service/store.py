@@ -30,6 +30,8 @@ class Store:
         self.db.execute("UPDATE jobs SET state='failed',error='本地服务重启中断了任务，请重试' WHERE state='running'")
         self.db.commit()
         for s in self.list():
+            if s.get("analysis_status") == "running" and not self.pending(s["id"], "analysis"):
+                self.update(s["id"], analysis_status="failed", warning="服务重启中断了分析，点击继续生成笔记即可接着处理")
             if s["mode"] == "live" and s["status"] in {"recording", "stopping"}:
                 self.update(s["id"], status="interrupted", warning="浏览器或服务重启；已接收音频保留，可完成已接收内容")
 
@@ -86,7 +88,10 @@ class Store:
         lines = [f"# {value.get('course_title', '')} · {value.get('title', '')}", "",
                  f"来源：{value.get('page_url', '')}", f"状态：{value['status']}", ""]
         if summary := value.get("summary"):
-            lines += ["## 本课概览", summary.get("overview", ""), "", "## 内容时间线"]
+            lines += ["## " + (summary.get("headline") or "本课概览"), summary.get("abstract") or summary.get("overview", ""), ""]
+            for group in summary.get("groups", []):
+                lines += ["### " + group["title"], group["detail"], ""]
+            lines += ["## 分段笔记"]
             for topic in summary.get("topics", []):
                 lines += [f"- [{topic.get('start', 0):.0f}s] {topic['title']} · {topic.get('chapter') or '未明确章节'}：{topic.get('detail', '')}"]
         lines += ["", "## 重点提醒（请核对原文）"]
@@ -134,7 +139,7 @@ class Store:
 
     def retry(self, sid: str):
         with self.lock:
-            self.db.execute("UPDATE jobs SET state='pending',error=NULL WHERE session_id=? AND state='failed'", (sid,))
+            self.db.execute("UPDATE jobs SET state='pending',error=NULL WHERE session_id=? AND state='failed' AND lane!='analysis'", (sid,))
             self.db.commit()
 
     def audio_inputs(self, sid: str):

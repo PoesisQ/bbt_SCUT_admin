@@ -9,7 +9,8 @@ function harness({paused=false,recorderError=false}={}) {
     storage:{local:storage(local),session:storage(session)},
     runtime:{id,getURL:file=>base+file,getContexts:async()=>contexts,onStartup:event(),
       onMessage:{addListener(fn){listeners.push(fn);}},async sendMessage(m){recorder.push(m);return recorderError&&m.type==="START"?{ok:false,error:"capture denied"}:{ok:true,data:{pending:0}};}},
-    tabs:{async get(tabId){return {id:tabId,url:"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882"};},async sendMessage(){},onRemoved:event(),onUpdated:event()},
+    tabs:{async get(tabId){return {id:tabId,active:true,windowId:1,url:"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882"};},async sendMessage(){},onRemoved:event(),onUpdated:event()},
+    windows:{async get(){return {focused:true};}},
     scripting:{async executeScript(options){if(options.files)return [];
       if(!options.args)return [{result:{currentTime:120,paused,rate:1}}];
       const url=options.args[0];let data;
@@ -30,12 +31,32 @@ function harness({paused=false,recorderError=false}={}) {
   vm.createContext(context);
   context.importScripts=(...files)=>{for(const file of files)vm.runInContext(fs.readFileSync(path.join(__dirname,file),"utf8"),context);};
   vm.runInContext(fs.readFileSync(path.join(__dirname,"background.js"),"utf8"),context);
-  async function send(message,{content=false}={}){return new Promise(resolve=>{const handled=listeners[0](message,{id,url:content?"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882":base+"study-popup.html",...(content?{tab:{id:7}}:{})},resolve);if(!handled)resolve(null);});}
+  async function send(message,{content=false,url}={}){return new Promise(resolve=>{const handled=listeners[0](message,{id,url:url||(content?"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882":base+"study-popup.html"),...(content?{tab:{id:7,url:"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882"}}:{})},resolve);if(!handled)resolve(null);});}
   return {send,requests,session,local,recorder,context,sid,documents};
 }
 test("school content scripts cannot start capture or retrieve the local pairing token",async()=>{
   const h=harness();assert.equal(await h.send({type:"GET_CONNECTION"},{content:true}),null);
   assert.equal(await h.send({type:"START_CAPTURE",tabId:7},{content:true}),null);assert.equal(h.requests.length,0);
+});
+
+test("automatic school entry opens once, respects opt-out, and never starts capture",async()=>{
+  const h=harness();let opens=0;h.context.chrome.action.openPopup=async()=>{opens++;};
+  const result=await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});
+  assert.equal(result.ok,true,result.error);assert.equal(result.data.popupOpened,true);assert.equal(opens,1);
+  await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});assert.equal(opens,1);
+  await h.send({type:"SET_SITE_ENTRY_PREF",enabled:false},{content:true});
+  assert.equal((await h.send({type:"PAGE_ASSISTANT_READY"},{content:true})).data.autoOpen,false);
+  assert.equal(h.documents.length,0);assert.equal(h.recorder.length,0);
+  assert.equal(await h.send({type:"OPEN_NOTEBOOK"},{content:true,url:"https://evil.example"}),null);
+});
+
+test("older browsers and inactive tabs retain a page entry without stealing focus",async()=>{
+  const h=harness();let result=await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});
+  assert.equal(result.ok,true,result.error);assert.equal(result.data.popupOpened,false);
+  h.context.chrome.action.openPopup=async()=>{throw Error("must not open");};
+  h.context.chrome.tabs.get=async id=>({id,windowId:2,active:false});
+  result=await h.send({type:"PAGE_ASSISTANT_READY"},{content:true});
+  assert.equal(result.data.popupOpened,false);assert.equal(h.recorder.length,0);
 });
 test("capture lifetime is in offscreen and persistent session storage, independent of the popup",async()=>{
   const h=harness();const result=await h.send({type:"START_CAPTURE",tabId:7,analysis:false});
@@ -68,6 +89,14 @@ test("paused playback cannot create a misleading recording and failed capture is
   const paused=harness({paused:true});assert.equal((await paused.send({type:"START_CAPTURE",tabId:7})).ok,false);assert.equal(paused.requests.length,0);
   const failed=harness({recorderError:true});assert.equal((await failed.send({type:"START_CAPTURE",tabId:7})).ok,false);
   assert.ok(failed.requests.some(r=>r.url.endsWith("/cancel")));assert.equal(failed.session.activeCapture,undefined);
+});
+
+test("capture permission after auto-open gives an actionable toolbar instruction without creating a session",async()=>{
+  const h=harness();h.context.chrome.tabCapture.getMediaStreamId=async()=>{throw Error("Extension has not been invoked (activeTab permission)");};
+  const result=await h.send({type:"START_CAPTURE",tabId:7});
+  assert.equal(result.ok,false);assert.match(result.error,/工具栏/);
+  assert.equal(h.requests.filter(r=>r.url.endsWith("/api/sessions")).length,0);
+  assert.equal(h.recorder.filter(r=>r.type==="START").length,0);
 });
 test("batch import persists completed entries and passes replay source only to the local service",async()=>{
   const h=harness();const result=await h.send({type:"START_BATCH",tabId:7,subIds:["686882"],analysis:false,forceAsr:true});assert.equal(result.ok,true);

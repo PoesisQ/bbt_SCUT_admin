@@ -137,11 +137,11 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.5.0"}
+        return {"app": "scut-local-assistant", "version": "0.6.0"}
 
     @app.get("/api/health")
     def diagnostics():
-        return {"ok": True, "asr": manager.asr.diagnostics(), "deepseek_configured": bool(settings.key()),
+        return {"ok": True, "asr": manager.asr.diagnostics(), "deepseek_configured": settings.public()["deepseek_configured"],
                 "jobs": [j for j in store.jobs() if j["state"] in {"pending", "running", "failed"}]}
 
     @app.get("/api/settings")
@@ -184,7 +184,8 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
     @app.get("/api/sessions")
     def sessions():
         return [{k: v for k, v in s.items() if k not in {"segments", "events"}} |
-                {"segment_count": len(s["segments"]), "event_count": len(s["events"])} for s in store.list()]
+                {"segment_count": len(s["segments"]), "event_count": len(s["events"]),
+                 "important_events": [e for e in s["events"] if e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in store.list()]
 
     @app.post("/api/sessions")
     def create(lesson: Lesson):
@@ -325,26 +326,33 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
         return store.get(sid)
 
     @app.post("/api/sessions/{sid}/analyze")
-    def reanalyze(sid: str):
-        session = store.get(sid)
-        if any(j["kind"] == "repair" and j["state"] in {"pending", "running"} for j in store.jobs(sid)):
-            raise HTTPException(409, "请等字幕修复完成后再生成总结")
-        if not settings.key():
-            raise ValueError("请先配置 DeepSeek API Key")
-        if not session["segments"]:
-            raise ValueError("此课时尚无字幕")
-        if store.pending(sid, "analysis"):
-            raise HTTPException(409, "分析正在进行")
-        store.enqueue(sid, "summary", {}, lane="analysis")
-        return store.update(sid, analysis_status="queued")
+    def reanalyze(sid: str, restart: bool = False):
+        with store.lock:
+            session = store.get(sid)
+            if session["status"] == "cancelled":
+                raise ValueError("此任务已取消，请重新导入课时")
+            if any(j["lane"] in {"asr", "media"} and j["state"] in {"pending", "running"} for j in store.jobs(sid)):
+                raise HTTPException(409, "请等字幕处理完成后再生成整课笔记")
+            if not settings.key():
+                raise ValueError("请先配置 DeepSeek API Key")
+            if not session["segments"]:
+                raise ValueError("此课时尚无字幕")
+            if store.pending(sid, "analysis"):
+                return session  # Repeated clicks reuse the existing task.
+            changes = {"analysis_status": "queued", "warning": "", "analysis": True}
+            if restart:
+                changes.update(analysis_reset_at=time.time(), analysis_done=0, analysis_progress="")
+            store.enqueue(sid, "summary", {}, lane="analysis")
+            return store.update(sid, **changes)
 
     @app.get("/api/sessions/{sid}/export")
     def export(sid: str):
-        store.get(sid)
         buffer = io.BytesIO()
-        with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-            for name in ("session.json", "subtitles.json", "subtitles.srt", "subtitles.txt", "events.json", "notes.md"):
-                archive.write(store.directory(sid) / name, name)
+        with store.lock:
+            store.export(store.get(sid))
+            with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+                for name in ("session.json", "subtitles.json", "subtitles.srt", "subtitles.txt", "events.json", "notes.md"):
+                    archive.write(store.directory(sid) / name, name)
         return Response(buffer.getvalue(), media_type="application/zip",
                         headers={"Content-Disposition": f'attachment; filename="lesson-{sid[:8]}.zip"'})
 
@@ -357,7 +365,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/{name}")
     def asset(name: str):
-        if name not in {"dashboard.html", "dashboard.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
+        if name not in {"dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)
         response = FileResponse(ROOT / "extension" / name)
         if name.endswith(".html"):

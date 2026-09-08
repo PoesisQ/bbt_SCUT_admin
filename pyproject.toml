@@ -1,7 +1,7 @@
 [project]
 name = "huanyuanshipin-capture"
-version = "0.5.0"
-description = "SCUT local lecture captions, classroom alerts and course timeline"
+version = "0.6.0"
+description = "SCUT local lecture captions, classroom alerts and course notes"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

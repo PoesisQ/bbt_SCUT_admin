@@ -203,8 +203,8 @@ class APITests(unittest.TestCase):
     def test_summary_yields_between_packs_to_realtime_analysis(self):
         archive = self.create(mode="subtitle")
         live = self.create()
-        self.store.update(archive, segments=[{"id": f"archive-{i}", "start": i*10, "end": i*10+9, "text": "课程内容"*800} for i in range(4)])
-        self.store.update(live, segments=[{"id": "live", "start": 0, "end": 5, "text": "请扫码签到"}])
+        self.store.update(archive, analysis=True, segments=[{"id": f"archive-{i}", "start": i*10, "end": i*10+9, "text": "课程内容"*800} for i in range(4)])
+        self.store.update(live, analysis=True, segments=[{"id": "live", "start": 0, "end": 5, "text": "请扫码签到"}])
         calls = []
         def analyze(segments, summary=False):
             calls.append(segments[0]["id"])
@@ -212,10 +212,22 @@ class APITests(unittest.TestCase):
                 self.store.enqueue(live, "analyze", {"start": 0, "end": 10}, lane="analysis", priority=0)
             return {"overview": "测试", "topics": [], "events": []}
         self.store.enqueue(archive, "summary", {}, lane="analysis")
-        with patch.object(self.manager.analyzer, "analyze", side_effect=analyze):
+        with patch.object(self.manager.analyzer, "synthesize", return_value={"title": "测试", "overview": "概览", "groups": []}), patch.object(self.manager.analyzer, "analyze", side_effect=analyze):
             self.manager.execute(self.store.claim("analysis"))
         self.assertEqual(calls[1], "live")
         self.assertGreater(len(calls), 2)
+
+    def test_repeated_analysis_clicks_reuse_job_and_do_not_retranscribe(self):
+        sid = self.create(mode="subtitle")
+        self.store.update(sid, stopped=True, status="complete", analysis_status="failed", warning="旧错误",
+                          segments=[{"id": "s", "start": 0, "end": 2, "text": "课程内容"}])
+        with patch.object(self.settings, "key", return_value="test-only-key"):
+            for _ in range(2):
+                response = self.client.post(f"/api/sessions/{sid}/analyze")
+                self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(self.store.jobs(sid)), 1)
+        self.assertEqual(self.store.jobs(sid)[0]["kind"], "summary")
+        self.assertEqual(self.store.get(sid)["warning"], "")
 
     def test_restart_marks_unfinished_work_and_preserves_received_audio(self):
         sid = self.create()

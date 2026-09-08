@@ -53,7 +53,29 @@ requirements 课程要求、schedule 安排、grading 评分、reminder 特别�
 "segment_ids":["s1"],"confidence":0.9}],"overview":"本段讲解进程调度",
 "topics":[{"title":"进程调度","chapter":null,"detail":"介绍时间片轮转","segment_ids":["s1"]}]}
 events 可以为空；概览和主题也必须有原文支持。message 简短明确，以中文输出。
+合并同一事项的重复说明，每段最多 12 条事件、6 个主题；overview 不超过 160 字，
+message 不超过 80 字，detail 不超过 160 字，evidence 只引用必要原句、不超过 160 字。
+每条 segment_ids 只列出最有代表性的 1 至 6 个片段，禁止列出整段所有 ID。
 """
+
+
+class OutputTooLong(ValueError):
+    pass
+
+
+def analysis_packs(segments: list[dict]) -> list[list[dict]]:
+    """Bound both serialized input and citation count, including short school subtitles."""
+    packs, current, size = [], [], 0
+    for segment in segments:
+        cost = len(json.dumps({k: segment[k] for k in ("start", "end", "text")}, ensure_ascii=False)) + 16
+        if current and (len(current) >= 96 or size + cost > 6200):
+            packs.append(current)
+            current, size = [], 0
+        current.append(segment)
+        size += cost
+    if current:
+        packs.append(current)
+    return packs
 
 
 class Analyzer:
@@ -61,17 +83,43 @@ class Analyzer:
         self.settings = settings
         self.transport = transport
 
-    def analyze(self, segments: list[dict], *, summary=False) -> dict:
+    def analyze(self, segments: list[dict], *, summary=False, _depth=0) -> dict:
+        try:
+            return self._request(segments, summary=summary)
+        except OutputTooLong:
+            if len(segments) < 2 or _depth >= 8:
+                raise ValueError("一段字幕的分析仍超出输出上限；已保留完成部分，请重试或更换分析模型") from None
+            middle = len(segments) // 2
+            left = self.analyze(segments[:middle], summary=summary, _depth=_depth + 1)
+            right = self.analyze(segments[middle:], summary=summary, _depth=_depth + 1)
+            return {"events": merge_events(left["events"], right["events"]),
+                    "topics": left["topics"] + right["topics"],
+                    "overview": left["overview"] + "\n\n" + right["overview"]}
+
+    def synthesize(self, topics: list[dict]) -> dict:
+        if not topics:
+            return {"title": "", "overview": "", "groups": []}
+        rows = [{"id": str(i), "start": t["start"], "end": t["end"],
+                 "text": t["title"] + "：" + t.get("detail", "")} for i, t in enumerate(topics)]
+        result = self._request(rows, summary=True, task="以下是整节课各段的知识点笔记。请综合全部内容，额外返回 title（24字内的整课主题标题），overview（200字内整课概览），topics（3至6个主要知识主题，将相关内容归组并引用代表片段ID）。以教学内容为主，不要把开场助教介绍、课堂寒暄或作业通知作为整课主题。此步骤 events 为空，不增加原笔记没有的事实。")
+        return {"title": result.get("title", ""), "overview": result["overview"],
+                "groups": [{"title": t["title"], "detail": t["detail"],
+                            "topic_indices": [int(i) for i in t["segment_ids"]]} for t in result["topics"]]}
+
+    def _request(self, segments: list[dict], *, summary=False, task=None) -> dict:
         if not segments:
             return {"events": [], "topics": [], "overview": "无可分析字幕"}
         key = self.settings.key()
         if not key:
             raise ValueError("未配置 DeepSeek API Key；本地字幕和规则提醒仍可用")
+        # Request-local references avoid echoing long database IDs hundreds of times.
+        aliases = {f"s{i + 1}": s["id"] for i, s in enumerate(segments)}
+        compact = [{"id": f"s{i + 1}", **{k: s[k] for k in ("start", "end", "text")}} for i, s in enumerate(segments)]
         payload = {"model": self.settings.data["deepseek_model"], "messages": [
             {"role": "system", "content": SYSTEM},
-            {"role": "user", "content": json.dumps({"task": "课段总结和重要事项" if summary else "实时课堂事件检测",
-                                                        "segments": [{k: s[k] for k in ("id", "start", "end", "text")} for s in segments]}, ensure_ascii=False)}],
-            "response_format": {"type": "json_object"}, "max_tokens": 4096,
+            {"role": "user", "content": json.dumps({"task": task or ("课段总结和重要事项" if summary else "实时课堂事件检测"),
+                                                        "segments": compact}, ensure_ascii=False)}],
+            "response_format": {"type": "json_object"}, "max_tokens": 6000,
             "temperature": 0.1, "stream": False}
         # New DeepSeek models offer non-thinking mode for latency-sensitive alerts.
         if self.settings.data["deepseek_model"].startswith("deepseek-v4"):
@@ -89,8 +137,14 @@ class Analyzer:
                 body = response.json()
                 choice = body["choices"][0]
                 if choice.get("finish_reason") == "length":
-                    raise ValueError("DeepSeek 输出被截断，请缩小分析窗口")
+                    raise OutputTooLong("分析结果超过输出上限；已保留完成的分段笔记，可以继续生成")
                 parsed = json.loads(choice["message"]["content"])
+                if not isinstance(parsed, dict):
+                    raise TypeError("Expected JSON object")
+                for field in ("events", "topics"):
+                    for item in (parsed.get(field) or []):
+                        if isinstance(item, dict) and isinstance(item.get("segment_ids"), list):
+                            item["segment_ids"] = [aliases.get(i, "") if isinstance(i, str) else "" for i in item["segment_ids"]]
                 return self.validate(parsed, segments)
             except (httpx.TransportError, json.JSONDecodeError, KeyError, TypeError) as exc:
                 if attempt == 2:
@@ -145,7 +199,8 @@ class Analyzer:
             topics.append({"title": item["title"][:200], "chapter": chapter,
                            "detail": str(item.get("detail", ""))[:1200], "start": refs[0]["start"], "end": refs[-1]["end"],
                            "segment_ids": [s["id"] for s in refs]})
-        return {"events": events, "topics": topics, "overview": str(body.get("overview", ""))[:3000]}
+        return {"events": events, "topics": topics, "overview": str(body.get("overview", ""))[:3000],
+                "title": str(body.get("title", ""))[:80]}
 
 
 def merge_events(existing: list[dict], incoming: list[dict]) -> list[dict]:

@@ -32,6 +32,20 @@ async function recorderState(){
 }
 async function installOverlay(tabId){await chrome.scripting.executeScript({target:{tabId},files:["session-view.js","overlay.js"]});}
 
+function schoolPage(url){try{return ["https://video.jw.scut.edu.cn","https://video-jw-443.webvpn.scut.edu.cn"].includes(new URL(url).origin);}catch{return false;}}
+async function openAssistant(tab,automatic=false){
+  // Current Chromium supports opening the action; older builds use the page entry.
+  if(chrome.action.openPopup){try{await chrome.action.openPopup({windowId:tab.windowId});return true;}catch{ /* Keep the in-page fallback accessible. */ }}
+  if(automatic)return false;
+  const url=chrome.runtime.getURL("study-popup.html?tab="+tab.id);
+  const saved=await chrome.storage.session.get("controlWindow");
+  if(saved.controlWindow){try{const window=await chrome.windows.get(saved.controlWindow,{populate:true});
+    const page=window.tabs?.find(t=>t.url===url);if(page){await chrome.windows.update(window.id,{focused:true,state:"normal"});return true;}
+  }catch{ /* Previous control window was closed. */ }}
+  const window=await chrome.windows.create({url,type:"popup",width:430,height:790,focused:true});
+  await chrome.storage.session.set({controlWindow:window.id});return true;
+}
+
 async function startCapture(message) {
   if(startingCapture||await activeCapture()) throw new Error("已有课程正在录制或等待上传，请先结束当前录制");
   startingCapture=true;
@@ -47,7 +61,12 @@ async function startCapture(message) {
     if(metadata.time_basis==="video"&&state.rate!==1) throw new Error("边播边识别请使用 1 倍速；批量回放转写不受播放速度影响");
     await A.api("/api/health");
     await offscreen();
-    const streamId=await chrome.tabCapture.getMediaStreamId({targetTabId:message.tabId});
+    let streamId;
+    try{streamId=await chrome.tabCapture.getMediaStreamId({targetTabId:message.tabId});}
+    catch(error){
+      if(/invoked|activeTab|permission/i.test(error.message||""))throw new Error("浏览器需要一次手动打开：请点击工具栏中的 SCUT 课堂助手图标，再点击“开始实时字幕”。自动打开面板不会代替录音授权。");
+      throw error;
+    }
     session=await A.api("/api/sessions",{method:"POST",body:{...metadata,mode:"live",analysis:!!message.analysis}});
     await installOverlay(message.tabId);
     const capture={sid:session.id,tabId:message.tabId,url:context.url,time_basis:metadata.time_basis};
@@ -127,11 +146,34 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message.target==="offscreen") return false;
   if(sender.id!==chrome.runtime.id) return false;
   const trusted=sender.url?.startsWith(chrome.runtime.getURL(""));
-  const contentAllowed=["OVERLAY_READY","PLAYER_CHANGED","SET_OVERLAY_PREFS","OPEN_CLASSROOM"];
-  if(!trusted&&!contentAllowed.includes(message.type)) return false;
+  const contentAllowed=["OVERLAY_READY","PLAYER_CHANGED","SET_OVERLAY_PREFS","OPEN_CLASSROOM","PAGE_ASSISTANT_READY","SET_SITE_ENTRY_PREF","OPEN_ASSISTANT","OPEN_NOTEBOOK"];
+  if(!trusted&&(!schoolPage(sender.url)||!contentAllowed.includes(message.type))) return false;
   (async()=>{
     await ready;
     switch(message.type) {
+      case "PAGE_ASSISTANT_READY": {
+        const {autoOpenAssistant=true}=await chrome.storage.local.get("autoOpenAssistant");
+        const capture=await activeCapture();
+        let connected=false,course="";
+        try{const sessions=await A.api("/api/sessions");connected=true;const id=new URL(sender.tab.url).searchParams.get("course_id");course=sessions.find(s=>s.course_id===id)?.course_title||"";}catch{ /* Entry remains usable before pairing. */ }
+        let popupOpened=false;
+        const tab=await chrome.tabs.get(sender.tab.id),key="auto-open-"+tab.windowId;
+        const previous=(await chrome.storage.session.get(key))[key]||0;
+        const window=await chrome.windows.get(tab.windowId);
+        if(autoOpenAssistant&&tab.active&&window.focused&&Date.now()-previous>45000){
+          await chrome.storage.session.set({[key]:Date.now()});popupOpened=await openAssistant(tab,true);
+        }
+        return {autoOpen:autoOpenAssistant,popupOpened,connected,course,recording:!!capture};
+      }
+      case "SET_SITE_ENTRY_PREF":
+        if(typeof message.enabled!=="boolean")throw new Error("无效显示偏好");
+        await chrome.storage.local.set({autoOpenAssistant:message.enabled});return true;
+      case "OPEN_ASSISTANT": return openAssistant(await chrome.tabs.get(sender.tab.id));
+      case "OPEN_NOTEBOOK": {
+        const params=new URLSearchParams({tab:String(sender.tab.id)}),id=new URL(sender.tab.url).searchParams.get("course_id");
+        if(/^\d+$/.test(id||""))params.set("course",id);
+        await chrome.tabs.create({url:chrome.runtime.getURL("dashboard.html?"+params)});return true;
+      }
       case "INSPECT": {
         const result=await SchoolAPI.inspect(message.tabId);
         const key=`media-${message.tabId}`;const observed=(await chrome.storage.session.get(key))[key]||[];

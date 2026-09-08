@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "SCUT 课堂助手",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "minimum_chrome_version": "116",
-  "description": "本地实时字幕、课堂重点提醒、回放转写和课程时间线，优先适配 Edge。",
+  "description": "本地课堂字幕、重要事项提醒、回放转写与课程笔记，优先适配 Edge。",
   "permissions": ["activeTab", "downloads", "scripting", "storage", "tabCapture", "offscreen", "alarms", "webRequest"],
   "optional_permissions": ["notifications"],
   "host_permissions": [
@@ -14,6 +14,10 @@
   "background": {"service_worker": "background.js"},
   "options_page": "options.html",
   "content_scripts": [{
+    "matches": ["https://video.jw.scut.edu.cn/*", "https://video-jw-443.webvpn.scut.edu.cn/*"],
+    "js": ["site-entry.js"],
+    "run_at": "document_idle"
+  }, {
     "matches": ["https://video.jw.scut.edu.cn/livingroom*", "https://video-jw-443.webvpn.scut.edu.cn/livingroom*"],
     "js": ["session-view.js", "overlay.js"],
     "run_at": "document_idle"

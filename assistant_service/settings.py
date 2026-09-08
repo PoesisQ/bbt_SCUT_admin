@@ -5,6 +5,7 @@ import ctypes
 import json
 import os
 import secrets
+import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,7 +41,12 @@ def protect(value: str, decrypt: bool = False) -> str:
 
 
 class Settings:
-    def __init__(self, root: Path | None = None):
+    def __init__(self, root: Path | None = None, *, vault_root: Path | None = None):
+        self.lock = threading.RLock()
+        # Explicit roots are isolated (tests/portable installations); normal launches
+        # share a Windows-user vault across checkouts and application upgrades.
+        self.vault = (vault_root or (root / "private" if root is not None else
+                      Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SCUTClassroomAssistant")) / "credentials.json"
         self.root = root or Path(os.getenv("SCUT_ASSISTANT_HOME", str(ROOT / ".local")))
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "settings.json"
@@ -61,33 +67,67 @@ class Settings:
             self.data.update(json.loads(self.path.read_text(encoding="utf-8")))
         else:
             self.save()
+        self._migrate_key()
         (self.root / "connection.txt").write_text(
             "本地服务：http://127.0.0.1:8765\n扩展连接口令（仅保存在本机）：\n" + self.data["token"] + "\n",
             encoding="utf-8",
         )
 
     def save(self):
-        atomic_json(self.path, self.data)
+        with self.lock:
+            atomic_json(self.path, self.data)
+
+    def _migrate_key(self):
+        encrypted = self.data.get("deepseek_key_encrypted")
+        if not encrypted:
+            return
+        try:
+            if not self.vault.exists():
+                protect(encrypted, True)  # Verify before moving the only saved credential.
+                atomic_json(self.vault, {"deepseek_key_encrypted": encrypted})
+            saved = json.loads(self.vault.read_text(encoding="utf-8"))
+            if saved.get("deepseek_key_encrypted"):
+                protect(saved["deepseek_key_encrypted"], True)
+            # An explicitly cleared vault also takes precedence over an older checkout.
+            self.data["deepseek_key_encrypted"] = ""
+            self.save()
+        except (ValueError, OSError):
+            # Preserve the legacy ciphertext when the vault cannot be read/written.
+            pass
 
     def key(self) -> str:
         if key := os.getenv("DEEPSEEK_API_KEY", "").strip():
             return key
         encrypted = self.data.get("deepseek_key_encrypted")
+        if self.vault.exists():
+            try:
+                encrypted = json.loads(self.vault.read_text(encoding="utf-8")).get("deepseek_key_encrypted", "") or encrypted
+            except (ValueError, OSError):
+                raise ValueError("本机密钥文件无法读取，请在设置中重新保存 Key") from None
         return protect(encrypted, True) if encrypted else ""
 
     def public(self) -> dict:
         result = {k: v for k, v in self.data.items() if k not in {"token", "deepseek_key_encrypted"}}
-        result["deepseek_configured"] = bool(self.key())
+        try:
+            result["deepseek_configured"] = bool(self.key())
+            result["deepseek_key_status"] = ("environment" if os.getenv("DEEPSEEK_API_KEY", "").strip() else "saved") if result["deepseek_configured"] else "missing"
+        except ValueError:
+            result["deepseek_configured"] = False
+            result["deepseek_key_status"] = "unreadable"
+        result["deepseek_key_location"] = str(self.vault)
         result["output_path"] = str(self.root / "sessions")
         return result
 
     def update(self, patch: dict):
-        allowed = set(self.public()) - {"deepseek_configured", "output_path"}
-        for k, v in patch.items():
-            if k in allowed:
-                self.data[k] = v
-        if patch.get("deepseek_key"):
-            self.data["deepseek_key_encrypted"] = protect(patch["deepseek_key"].strip())
-        if patch.get("clear_deepseek_key"):
-            self.data["deepseek_key_encrypted"] = ""
-        self.save()
+        with self.lock:
+            if key := str(patch.get("deepseek_key") or "").strip():
+                atomic_json(self.vault, {"deepseek_key_encrypted": protect(key)})
+                self.data["deepseek_key_encrypted"] = ""
+            if patch.get("clear_deepseek_key"):
+                atomic_json(self.vault, {"deepseek_key_encrypted": ""})
+                self.data["deepseek_key_encrypted"] = ""
+            allowed = set(self.data) - {"token", "deepseek_key_encrypted"}
+            for k, v in patch.items():
+                if k in allowed:
+                    self.data[k] = v
+            self.save()
