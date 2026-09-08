@@ -12,17 +12,19 @@ globalThis.SchoolAPI = {
     if(current.origin!==context.origin||current.courseId!==context.courseId) throw new Error("课程标签页已切换，请重新打开课堂助手");
     // Execute only a fixed GET endpoint on the already logged-in school origin. No cookies are exported.
     const results=await chrome.scripting.executeScript({target:{tabId:context.tabId},world:"MAIN",
-      func:async(url,origin)=>{
+      func:async(url,origin,kind)=>{
         const target=new URL(url);
         if(location.origin!==origin||target.origin!==origin||!target.pathname.startsWith("/courseapi/")) return {error:"课程页面来源不匹配"};
         try {
           const response=await fetch(url,{credentials:"include",signal:AbortSignal.timeout(15000)});
           if(!response.ok) return {error:`学校接口 HTTP ${response.status}，请检查登录状态`};
           const data=await response.json();
+          // The school uses a business error code for a replay whose subtitles have not been uploaded.
+          if(kind==="subtitle"&&String(data.code)==="10002"&&data.msg==="未查询到语音数据"&&Number(data.total)===0&&Array.isArray(data.list)&&data.list.length===0) return {data:{code:0,list:[]}};
           if(data.code!==undefined&&![0,200,"0","200"].includes(data.code)) return {error:"学校接口未授权或数据暂不可用，请在当前入口重新登录"};
           return {data};
         } catch {return {error:"学校接口请求失败，请检查登录或校园网络"};}
-      },args:[url,context.origin]});
+      },args:[url,context.origin,kind]});
     const result=results?.[0]?.result;
     if(!result||result.error) throw new Error(result?.error||"课程页未响应");
     return result.data;

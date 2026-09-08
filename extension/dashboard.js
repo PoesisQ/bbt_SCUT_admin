@@ -1,9 +1,9 @@
 const A=AssistantClient,L=CourseLibrary,$=id=>document.getElementById(id),isExtension=!!globalThis.chrome?.runtime?.id;
-let sessions=[],selected=null,detail=null,catalogue=[],loading=false,detailStamp=0,listStamp="",course="",filter="lessons",configured=false;
+let sessions=[],imports=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",configured=false;
 const params=new URLSearchParams(location.search);
 if(/^[a-f0-9]{32}$/.test(params.get("session")||""))selected=params.get("session");
 if(/^\d+$/.test(params.get("course")||""))course=params.get("course");
-const labels={queued:"等待字幕",recording:"正在录音",stopping:"正在保存字幕",downloading:"下载音轨",transcribing:"本地转写",processing:"处理字幕",analyzing:"整理笔记",complete:"字幕已保存",failed:"字幕处理失败",cancelled:"已停止任务",interrupted:"录制中断"};
+const labels={queued:"等待本地处理",recording:"正在录音",stopping:"正在保存字幕",downloading:"下载音轨",transcribing:"本地转写",processing:"处理字幕",analyzing:"整理笔记",complete:"字幕已保存",failed:"字幕处理失败",cancelled:"已停止任务",interrupted:"录制中断"};
 function node(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
 function clock(sec){const n=Math.max(0,Math.floor(sec||0));return [Math.floor(n/3600),Math.floor(n%3600/60),n%60].map(x=>String(x).padStart(2,"0")).join(":");}
 function status(text,error=false){$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
@@ -24,11 +24,12 @@ function showView(view){for(const item of document.querySelectorAll("[data-view]
 function openLesson(id,view="summary"){navigate(id);showView(view);}
 function courseButton(id,title,count,notes){const b=node("button",undefined,"course-choice"+(course===id?" active":""));b.append(node("strong",title),node("small",count+" 份记录 · "+notes+" 份笔记"));b.setAttribute("aria-pressed",String(course===id));b.onclick=()=>{course=id;navigate();};return b;}
 function renderLibrary(){
-  const groups=L.groups(sessions),chosen=groups.find(g=>g.id===course),all=chosen?.lessons||sessions;
-  const rail=$("course-list");rail.replaceChildren(courseButton("","全部课程",sessions.length,sessions.filter(L.hasNotes).length));
+  const records=[...sessions,...L.importRows(imports)];
+  const groups=L.groups(records),chosen=groups.find(g=>g.id===course),all=chosen?.lessons||records;
+  const rail=$("course-list");rail.replaceChildren(courseButton("","全部课程",records.length,sessions.filter(L.hasNotes).length));
   for(const g of groups)rail.append(courseButton(g.id,g.title,g.lessons.length,g.ready));
   $("course-title").textContent=chosen?.title||"全部课程";
-  const pending=all.filter(L.needsNotes).length;
+  const pending=all.filter(L.pending).length;
   $("course-meta").textContent=all.length+" 份课堂记录 · "+all.filter(L.hasNotes).length+" 份完整笔记"+(pending?" · "+pending+" 份待整理":"");
   document.querySelector('[data-filter="pending"]').textContent="待整理"+(pending?" "+pending:"");
   const cloud=$("topic-cloud");cloud.replaceChildren();
@@ -41,8 +42,11 @@ function renderLibrary(){
       const b=node("button","查看本课事项 ↗");b.onclick=()=>openLesson(e.sid,"events");card.append(b);target.append(card);
     }
   }else{
-    const rows=all.filter(s=>(filter!=="pending"||L.needsNotes(s)||["queued","downloading","transcribing","processing","failed"].includes(s.status))&&matches([s.course_title,s.title,s.summary,s.important_events])).sort((a,b)=>b.start_at-a.start_at||b.created_at-a.created_at);
-    for(const s of rows){const card=node("button",undefined,"note-card"),titles=L.titles(s);
+    const rows=all.filter(s=>(filter!=="pending"||L.pending(s))&&matches([s.course_title,s.title,s.summary,s.important_events])).sort((a,b)=>b.start_at-a.start_at||b.created_at-a.created_at);
+    for(const s of rows){
+      if(s.isImport){const card=node("article",undefined,"note-card import-card");card.append(node("div",s.course_title,"note-meta"),node("h3",s.title),node("span",s.status==="failed"?"导入未完成":"正在读取学校数据","note-state pending"),node("p",s.error||"尚未交给本地处理。请保持浏览器、学校课时标签页和本地服务运行。"));
+        const link=node("a",s.status==="failed"?"返回本节课重新导入 ↗":"打开学校课时 ↗","text-button");link.href=s.page_url;link.target="_blank";link.rel="noopener noreferrer";card.append(link);target.append(card);continue;}
+      const card=node("button",undefined,"note-card"),titles=L.titles(s);
       const state=L.busy(s)?"整理中 "+(s.analysis_progress||""):s.analysis_status==="failed"?"笔记待续":L.hasNotes(s)?"笔记就绪":labels[s.status]||s.status;
       card.append(node("div",s.course_title+" · "+s.title,"note-meta"),node("h3",s.summary?.headline||titles.slice(0,2).join(" · ")||s.title));
       card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?"字幕已保存，可以从中断处继续生成笔记。":s.segment_count?"已有字幕。生成笔记后，这里会显示本课知识点与内容概览。":s.progress||"等待课程字幕。")).slice(0,180)));
@@ -120,12 +124,12 @@ async function refreshDetail(){if(!selected)return;const id=selected;try{const v
 async function refresh(){
   if(loading)return;loading=true;
   try{
-    const result=await Promise.all([A.api("/api/sessions"),A.api("/api/settings")]);
-    sessions=result[0];configured=result[1].deepseek_configured;
+    const result=await Promise.all([A.api("/api/sessions"),A.api("/api/settings"),A.api("/api/imports")]);
+    sessions=result[0];configured=result[1].deepseek_configured;imports=result[2];
     $("health").textContent="本地已连接";$("health").className="chip";
     const live=sessions.find(s=>s.mode==="live"&&!s.stopped&&s.status==="recording");
     $("current-class").hidden=!live;if(live)$("current-class-title").textContent=live.course_title+" · 正在后台录音";
-    const stamp=JSON.stringify(sessions);
+    const stamp=JSON.stringify([sessions,imports]);
     if(stamp!==listStamp){listStamp=stamp;renderLibrary();}
     await refreshDetail();if(detail)renderAction();
     if(isExtension){const batch=await A.send("BATCH_STATE");$("stop-batch").hidden=!batch||batch.cancelled||!batch.items.some(i=>i.status==="pending");if(batch)$("batch-status").textContent=(batch.cancelled?"已停止继续导入 · ":"")+batch.items.filter(i=>i.status==="queued").length+"/"+batch.items.length+" 节已导入\n"+batch.items.filter(i=>i.status==="failed").map(i=>i.sub_id+"："+i.error).join("\n");}
@@ -148,12 +152,12 @@ $("regenerate").onclick=()=>act($("regenerate"),()=>analyze(true));
 for(const name of ["retry","cancel"])$(name).onclick=()=>act($(name),async()=>{await A.api("/api/sessions/"+selected+"/"+name,{method:"POST"});detailStamp=0;await refresh();});
 $("attach").onclick=()=>act($("attach"),async()=>{const tabs=await chrome.tabs.query({url:["https://video.jw.scut.edu.cn/livingroom*","https://video-jw-443.webvpn.scut.edu.cn/livingroom*"]});const tab=tabs.find(t=>{const u=new URL(t.url);return u.searchParams.get("course_id")===detail.course_id&&u.searchParams.get("sub_id")===detail.sub_id;});if(!tab)throw new Error("请先在浏览器中打开这节课的播放页");await A.send("ATTACH_REPLAY",{tabId:tab.id,sid:selected});status("字幕已显示，将跟随原视频播放位置。");});
 $("load-catalogue").onclick=()=>act($("load-catalogue"),async()=>{
-  const data=await A.send("INSPECT",{tabId:Number($("source-tab").value)});catalogue=data.catalogue;$("batch-hint").textContent=data.lesson.course_title;$("catalogue").replaceChildren();
+  const data=await A.send("INSPECT",{tabId:Number($("source-tab").value)});catalogue=data.catalogue;catalogueCourse=data.lesson.course_title;$("batch-hint").textContent=catalogueCourse;$("catalogue").replaceChildren();
   for(const item of catalogue){const label=node("label",undefined,"lesson-check"),box=document.createElement("input");box.type="checkbox";box.value=item.sub_id;box.checked=!["1","2","3","5","9"].includes(item.status);box.disabled=!box.checked;label.append(box,node("span",item.title),node("small",box.disabled?"未就绪":"可处理"));$("catalogue").append(label);}
   if(!catalogue.length)throw new Error("未取得课程目录；请检查学校接口或重新打开课程页面");
 });
 $("select-ready").onclick=()=>$("catalogue").querySelectorAll("input:not(:disabled)").forEach(x=>x.checked=true);$("select-none").onclick=()=>$("catalogue").querySelectorAll("input").forEach(x=>x.checked=false);
-$("start-batch").onclick=()=>act($("start-batch"),async()=>{const subIds=[...$("catalogue").querySelectorAll("input:checked")].map(i=>i.value);await A.send("START_BATCH",{tabId:Number($("source-tab").value),subIds,analysis:$("batch-analysis").checked,forceAsr:$("force-asr").checked});status("已开始导入所选课时；本地任务会按顺序处理。请保持该课程标签页打开至导入结束。");});
+$("start-batch").onclick=()=>act($("start-batch"),async()=>{const subIds=[...$("catalogue").querySelectorAll("input:checked")].map(i=>i.value);await A.send("START_BATCH",{tabId:Number($("source-tab").value),subIds,lessons:catalogue.map(l=>({...l,course_title:catalogueCourse})),analysis:$("batch-analysis").checked,forceAsr:$("force-asr").checked});status("导入请求已保存，正在读取学校数据。进度和失败原因会保留在待整理中。");await refresh();});
 $("stop-batch").onclick=()=>act($("stop-batch"),async()=>{await A.send("STOP_BATCH");status("已停止继续导入。已入队的本地课时可逐个取消。");});
 (async()=>{
   const token=new URLSearchParams(location.hash.slice(1)).get("token");if(token){await A.setConnection(token);history.replaceState(null,"",location.pathname+location.search);}

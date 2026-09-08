@@ -20,6 +20,7 @@ class Store:
         self.db.executescript("""
             PRAGMA journal_mode=WAL;
             CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS imports(id TEXT PRIMARY KEY, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS jobs(
                 id TEXT PRIMARY KEY, session_id TEXT NOT NULL, lane TEXT NOT NULL,
                 kind TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL,
@@ -59,6 +60,22 @@ class Store:
             self.db.commit()
             self.export(value)
         return value
+
+    def imports(self) -> list[dict]:
+        with self.lock:
+            return [json.loads(r[0]) for r in self.db.execute("SELECT data FROM imports ORDER BY rowid DESC")]
+
+    def save_imports(self, items: list[dict]):
+        # Persist before contacting the school. A failed lookup must not disappear with the popup.
+        with self.lock, self.db:
+            for item in items:
+                row = self.db.execute("SELECT data FROM imports WHERE id=?", (item["request_id"],)).fetchone()
+                old = json.loads(row[0]) if row else {}
+                if old.get("status") == "queued":
+                    continue  # A delayed browser update must not undo a successful hand-off.
+                value = {**item, "created_at": old.get("created_at", time.time()), "updated_at": time.time()}
+                self.db.execute("INSERT OR REPLACE INTO imports VALUES(?,?)",
+                                (item["request_id"], json.dumps(value, ensure_ascii=False)))
 
     def update(self, sid: str, **changes) -> dict:
         with self.lock:

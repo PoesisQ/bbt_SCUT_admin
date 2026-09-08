@@ -1,6 +1,6 @@
 const test=require("node:test"),assert=require("node:assert/strict"),vm=require("node:vm"),fs=require("node:fs"),path=require("node:path");
 
-function harness({paused=false,recorderError=false}={}) {
+function harness({paused=false,recorderError=false,subtitle={code:10002,msg:"未查询到语音数据",total:0,list:[]},infoError=false,journalError=false}={}) {
   const local={token:"unit-test-token"},session={},requests=[],recorder=[],listeners=[],contexts=[],documents=[];
   const id="a".repeat(32),sid="b".repeat(32),base=`chrome-extension://${id}/`;
   const event=()=>{const handlers=[];return {addListener(fn){handlers.push(fn);},async emit(...args){for(const fn of handlers)await fn(...args);}};};
@@ -15,9 +15,13 @@ function harness({paused=false,recorderError=false}={}) {
       if(!options.args)return [{result:{currentTime:120,paused,rate:1}}];
       const url=options.args[0];let data;
       if(url.includes("catalogue"))data={result:{data:[{sub_id:"686882",sub_status:"6",start_at:1}]}};
-      else if(url.includes("search-trans-result"))data={code:0,list:[]};
+      else if(url.includes("search-trans-result"))data=subtitle;
+      else if(infoError)data={code:401};
       else data={code:0,data:{sub_status:"6",course_title:"测试课程",sub_title:"测试课时",content:{save_playback:{contents:"https://video.jw.scut.edu.cn/play/a.mp4"}}}};
-      return [{result:{data}}];}},
+      // Execute the actual isolated school GET function, so business codes exercise the real boundary.
+      const page={URL,AbortSignal,location:{origin:"https://video.jw.scut.edu.cn"},fetch:async()=>({ok:true,json:async()=>data})};
+      vm.createContext(page);page.args=options.args;
+      return [{result:await vm.runInContext(`(${options.func.toString()})(...args)`,page)}];}},
     offscreen:{async createDocument(data){documents.push(data);contexts.push({});}},tabCapture:{async getMediaStreamId(){return "test-stream-id";}},
     action:{async setBadgeText(){},async setBadgeBackgroundColor(){}},
     alarms:{async create(){},onAlarm:event()},webRequest:{onBeforeRequest:event()},permissions:{async contains(){return false;}}
@@ -25,6 +29,7 @@ function harness({paused=false,recorderError=false}={}) {
   const context={chrome,URL,URLSearchParams,AbortSignal,setTimeout,clearTimeout,crypto:require("node:crypto").webcrypto,
     async fetch(url,options){
       requests.push({url,...options});
+      if(journalError&&url.endsWith("/api/imports"))throw Error("本地服务未连接");
       return {ok:true,async json(){return url.endsWith("/api/sessions")?{id:sid,...JSON.parse(options.body)}:{ok:true};}};
     }
   };
@@ -111,4 +116,35 @@ test("only an explicit open action opens the browser popup",async()=>{
  const h=harness();let opens=0;h.context.chrome.action.openPopup=async()=>{opens++;};
  const result=await h.send({type:"OPEN_ASSISTANT"},{content:true});
  assert.equal(result.ok,true);assert.equal(opens,1);assert.equal(h.documents.length,0);
+});
+
+async function finishBatch(h){for(let i=0;i<80&&h.local.batch.items.some(i=>i.status==="pending");i++)await new Promise(r=>setTimeout(r,2));await new Promise(r=>setTimeout(r,5));}
+test("unpublished subtitles fall back to local replay ASR with a durable hand-off",async()=>{
+  const h=harness();const response=await h.send({type:"START_BATCH",tabId:7,subIds:["686882"],analysis:false});assert.equal(response.ok,true,response.error);
+  await finishBatch(h);assert.equal(h.local.batch.items[0].status,"queued");
+  assert.equal(JSON.parse(h.requests.find(r=>r.url.endsWith("/api/sessions")).body).mode,"replay");
+  const journal=h.requests.filter(r=>r.url.endsWith("/api/imports")).map(r=>JSON.parse(r.body).items[0]);
+  assert.equal(journal[0].status,"pending");assert.equal(journal.at(-1).status,"queued");assert.equal(journal.at(-1).sid,h.sid);assert.equal(journal.at(-1).title,"测试课时");
+  assert.ok(h.requests.findIndex(r=>r.url.endsWith("/api/imports"))<h.requests.findIndex(r=>r.url.endsWith("/api/sessions")));
+});
+test("real school errors stay failed and visible when another batch starts",async()=>{
+  const h=harness({infoError:true});await h.send({type:"START_BATCH",tabId:7,subIds:["686882"]});await finishBatch(h);
+  const old=h.local.batch.id;assert.equal(h.local.batch.items[0].status,"failed");
+  assert.equal(h.requests.filter(r=>r.url.endsWith("/api/sessions")).length,0);
+  await h.send({type:"START_BATCH",tabId:7,subIds:["686842"]});await finishBatch(h);
+  const saved=h.requests.filter(r=>r.url.endsWith("/api/imports")).flatMap(r=>JSON.parse(r.body).items);
+  assert.ok(saved.some(i=>i.request_id===old+"-686882"&&i.status==="failed"&&i.error.includes("未授权")));
+});
+test("a failed local journal write never reports queue success",async()=>{
+  const h=harness({journalError:true});const result=await h.send({type:"START_BATCH",tabId:7,subIds:["686882"]});
+  assert.equal(result.ok,false);assert.equal(h.local.batch,undefined);assert.equal(h.requests.filter(r=>r.url.endsWith("/api/sessions")).length,0);
+});
+
+test("published subtitles are imported directly, without replay ASR",async()=>{
+  const h=harness({subtitle:{code:0,list:[{BeginSec:1,EndSec:4,Text:"这一节介绍进程。"}]}});
+  await h.send({type:"START_BATCH",tabId:7,subIds:["686882"]});await finishBatch(h);
+  const body=JSON.parse(h.requests.find(r=>r.url.endsWith("/api/sessions")).body);
+  assert.equal(body.mode,"subtitle");assert.equal(body.source_url,undefined);
+  assert.equal(JSON.parse(h.requests.find(r=>r.url.endsWith("/subtitles")).body).items.length,1);
+  assert.equal(h.local.batch.items[0].status,"queued");
 });

@@ -1,5 +1,13 @@
 const test=require("node:test"),assert=require("node:assert/strict"),L=require("./library-core.js");
 const lesson={id:"a",course_id:"1",course_title:"课程",stopped:true,status:"complete",segment_count:1418,analysis_status:"failed",warning:"输出截断",summary:null};
+
+test("failed and pending imports appear without subtitles and survive unrelated batches",()=>{
+  const imports=[{course_id:"1",sub_id:"10",status:"failed",created_at:1},{course_id:"1",sub_id:"11",status:"pending",created_at:2}];
+  let rows=L.importRows(imports);assert.equal(rows.length,2);assert.ok(rows.every(L.pending));assert.equal(L.groups(rows)[0].lessons.length,2);
+  rows=L.importRows([...imports,{course_id:"1",sub_id:"10",status:"queued",created_at:3}]);
+  assert.equal(rows.length,1);assert.equal(rows[0].sub_id,"11");
+  assert.equal(L.pending({...lesson,status:"downloading",segment_count:0}),true);
+});
 test("a failed replay with a saved key offers resume instead of configuring key",()=>{
   assert.equal(L.action(lesson,true).label,"继续生成笔记");
   assert.equal(L.action(lesson,false).settings,true);

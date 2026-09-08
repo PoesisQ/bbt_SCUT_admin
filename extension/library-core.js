@@ -4,6 +4,15 @@
   const titles = s => [...new Set((s.summary?.topics || []).map(t=>t.title).filter(Boolean))];
   const hasNotes = s => !!s.summary && !s.summary.partial && s.analysis_status === "complete";
   const needsNotes = s => s.status !== "cancelled" && !!s.segment_count && !hasNotes(s);
+  const pending = s => s.isImport ? ["pending","failed"].includes(s.status) : needsNotes(s)||["queued","downloading","transcribing","processing","failed"].includes(s.status);
+  function importRows(imports){
+    const latest=new Map();
+    for(const item of [...imports].sort((a,b)=>b.created_at-a.created_at)){
+      const key=item.course_id+":"+item.sub_id;
+      if(!latest.has(key))latest.set(key,item);
+    }
+    return [...latest.values()].filter(i=>["pending","failed"].includes(i.status)).map(i=>({...i,isImport:true,segment_count:0,event_count:0}));
+  }
   function groups(sessions){
     const result = new Map();
     for(const s of sessions){
@@ -25,7 +34,7 @@
     if(hasNotes(s))return {label:"笔记已就绪",hidden:true};
     return {label:s.analysis_status === "failed" || s.summary?.partial ? "继续生成笔记" : "生成本课笔记"};
   }
-  const api={groups,titles,hasNotes,needsNotes,busy,action};
+  const api={groups,titles,hasNotes,needsNotes,pending,importRows,busy,action};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   root.CourseLibrary=api;
 })(globalThis);

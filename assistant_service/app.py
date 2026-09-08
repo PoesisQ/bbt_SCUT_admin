@@ -63,6 +63,25 @@ class ConfigPatch(BaseModel):
         return [v.lower() for v in values] if values is not None else values
 
 
+class ImportRecord(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    request_id: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,100}$")
+    course_id: str = Field(pattern=r"^\d+$", max_length=30)
+    sub_id: str = Field(pattern=r"^\d+$", max_length=30)
+    course_title: str = Field(default="课程", max_length=200)
+    title: str = Field(default="课时", max_length=200)
+    page_url: str = Field(max_length=2000)
+    start_at: float = Field(default=0, ge=0, allow_inf_nan=False)
+    status: Literal["pending", "failed", "queued", "cancelled"] = "pending"
+    error: str = Field(default="", max_length=1000)
+    sid: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+
+
+class ImportBatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    items: list[ImportRecord] = Field(min_length=1, max_length=200)
+
+
 class SubtitleItem(BaseModel):
     BeginSec: float = Field(ge=0, le=172800, allow_inf_nan=False)
     EndSec: float = Field(ge=0, le=172800, allow_inf_nan=False)
@@ -137,7 +156,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.7.0"}
+        return {"app": "scut-local-assistant", "version": "0.7.2"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -186,6 +205,25 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
         return [{k: v for k, v in s.items() if k not in {"segments", "events", "rule_candidates"}} |
                 {"segment_count": len(s["segments"]), "event_count": len(s["events"]),
                  "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in store.list()]
+
+    @app.get("/api/imports")
+    def imports():
+        return store.imports()
+
+    @app.post("/api/imports")
+    def save_imports(batch: ImportBatch):
+        for item in batch.items:
+            course = parse_course_url(item.page_url)
+            if course.course_id != item.course_id or course.sub_id != item.sub_id:
+                raise ValueError("课时信息与页面 URL 不匹配")
+            if item.status == "queued" and not item.sid:
+                raise ValueError("尚未创建本地课时，不能标记为已导入")
+            if item.sid:
+                session = store.get(item.sid)
+                if any(session.get(key) != getattr(item, key) for key in ("request_id", "course_id", "sub_id")):
+                    raise ValueError("导入记录与本地课时不匹配")
+        store.save_imports([item.model_dump() for item in batch.items])
+        return {"ok": True}
 
     @app.post("/api/sessions")
     def create(lesson: Lesson):

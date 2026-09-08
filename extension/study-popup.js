@@ -1,6 +1,6 @@
 (() => {
 const A=AssistantClient,V=SessionView,$=id=>document.getElementById(id);
-let tab,inspection,connected=false,reading=false,editing=false,configured=false,activeSession=null,preferences={analysisDefault:true},acting=new Set();
+let tab,inspection,connected=false,reading=false,editing=false,configured=false,activeSession=null,importSession=null,preferences={analysisDefault:true},acting=new Set();
 function show(text,error=false){$("message").textContent=text;$("message").className="notice"+(error?" error":"");}
 function paintScene(state={}){
   const view=PopupState.scene(inspection,state);document.body.dataset.scene=view.name;
@@ -43,12 +43,23 @@ async function recorder(){
     if(!acting.has("stop"))$("stop").disabled=!running;
     if(!acting.has("start"))$("start").disabled=!connected||!inspection||running||!!state?.pending;
     $("analysis").disabled=!configured||editing;
+    if(connected&&inspection){
+      const entries=await A.api("/api/imports");
+      const entry=entries.filter(i=>i.course_id===inspection.lesson.course_id&&i.sub_id===inspection.lesson.sub_id).sort((a,b)=>b.created_at-a.created_at)[0];
+      $("import-progress").hidden=!entry;
+      if(entry){importSession=entry.sid;
+        $("import-state").textContent={pending:"正在读取学校数据",failed:"本节课导入未完成",queued:"本节课已交给本地处理",cancelled:"已停止导入"}[entry.status];
+        $("import-description").textContent=entry.error||(entry.status==="pending"?"请求已保存。请暂时保持学校课时标签页打开。":entry.status==="queued"?"进度、字幕和笔记都在课程笔记中。没有学校字幕时，会自动下载音轨并转写。":"可再次点击整理本节回放。");
+        if(entry.status==="pending")$("process").disabled=true;
+      }
+    }
   }catch(e){$("recorder").textContent=e.message;}finally{reading=false;}
 }
 $("options").onclick=()=>chrome.runtime.openOptionsPage();
 $("legacy").onclick=()=>location.href="popup.html";
 $("dashboard").onclick=()=>A.openDashboard(null,tab?.id);
 $("session-detail").onclick=()=>A.openDashboard(activeSession?.id,tab?.id);
+$("import-detail").onclick=()=>A.openDashboard(importSession,tab?.id);
 $("expand-room").onclick=()=>action("expand-room",()=>A.openClassroom(tab?.id));
 $("analysis").onchange=async()=>{editing=true;const wanted=$("analysis").checked;
   try{if(activeSession&&!activeSession.stopped)await A.api("/api/sessions/"+activeSession.id+"/analysis-preference",{method:"POST",body:{enabled:wanted}});
@@ -60,7 +71,7 @@ $("start").onclick=()=>action("start",async()=>{await A.send("START_CAPTURE",{ta
 $("stop").onclick=()=>action("stop",async()=>{const s=await A.send("STOP_CAPTURE");show(s.pending?"正在补传 "+s.pending+" 段音频，请保持本地服务运行。":"录音已结束，剩余字幕和总结会继续保存。");});
 $("recover").onclick=()=>action("recover",async()=>{const s=await A.send("RECOVER_UPLOADS");show(s.error||"待上传音频："+s.pending+" 段",!!s.error);});
 $("auto-open").onchange=async e=>{await chrome.storage.local.set({autoOpenAssistant:e.target.checked});};
-$("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],analysis:configured&&$("analysis").checked,forceAsr:false});show("本节课已加入队列，可在课程笔记查看。");});
+$("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],lessons:[inspection.lesson],analysis:configured&&$("analysis").checked,forceAsr:false});show("导入请求已保存，正在读取学校数据。");});
 (async()=>{preferences=await chrome.storage.local.get({analysisDefault:true,autoOpenAssistant:true});$("analysis").checked=V.analysisEnabled(preferences,null);$("auto-open").checked=preferences.autoOpenAssistant;
   const sourceTab=Number(new URLSearchParams(location.search).get("tab"));
   if(sourceTab>0)tab=await chrome.tabs.get(sourceTab);else [tab]=await chrome.tabs.query({active:true,currentWindow:true});

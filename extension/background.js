@@ -4,7 +4,7 @@ const ready=chrome.storage.local.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"}
 chrome.runtime.onInstalled?.addListener(({reason})=>{
   if(reason==="install")void chrome.tabs.create({url:chrome.runtime.getURL("welcome.html")});
 });
-let creatingOffscreen, batchRunning=false, startingCapture=false;
+let creatingOffscreen, batchRunning=false, startingCapture=false, startingBatch=false;
 
 async function offscreen() {
   if(!chrome.offscreen||!chrome.tabCapture?.getMediaStreamId) throw new Error("请升级到 Edge / Chrome 116 或以上版本");
@@ -82,11 +82,12 @@ async function startCapture(message) {
   } finally {startingCapture=false;}
 }
 
-async function processLesson(context, subId, analysis, forceAsr, requestId) {
+async function processLesson(context, subId, analysis, forceAsr, requestId, onMetadata) {
   const info=(await SchoolAPI.get(context,"info",subId)).data||{};
   if(!ScutStudy.replayEligible({status:info.sub_status})) throw new Error("课时仍在直播、未开始或回放尚未就绪");
   const pageUrl=new URL(context.url);pageUrl.searchParams.set("sub_id",subId);
   const metadata=ScutStudy.lesson(info,{...context,subId,url:pageUrl.href});
+  await onMetadata(metadata);
   let items=[];
   if(!forceAsr) items=ScutSubtitleCore.extractSubtitleItems(await SchoolAPI.get(context,"subtitle",subId)).filter(s=>typeof s.Text==="string"&&Number.isFinite(Number(s.BeginSec)));
   const sources=ScutStudy.mediaSources(info,context.origin).filter(s=>s.kind==="replay");
@@ -100,26 +101,41 @@ async function processLesson(context, subId, analysis, forceAsr, requestId) {
   return session;
 }
 
+function importRecord(batch,item){
+  const url=new URL(batch.context.url);url.searchParams.set("sub_id",item.sub_id);
+  const lesson=item.lesson||{};
+  return {request_id:`${batch.id}-${item.sub_id}`,course_id:batch.context.courseId,sub_id:item.sub_id,
+    course_title:lesson.course_title||"课程 "+batch.context.courseId,title:lesson.title||"课时 "+item.sub_id,
+    page_url:url.href,start_at:lesson.start_at||0,status:item.status,error:(item.error||"").slice(0,1000),sid:item.sid||null};
+}
+async function syncBatch(batch){
+  if(!batch?.items.length)return;
+  await A.api("/api/imports",{method:"POST",body:{items:batch.items.map(item=>importRecord(batch,item))}});
+}
 async function runBatch() {
   if(batchRunning) return;
   batchRunning=true;
   try {
     for(;;) {
       const {batch}=await chrome.storage.local.get("batch");
+      await syncBatch(batch); // Also flush terminal results after a temporary local-service outage.
       if(!batch||batch.cancelled) break;
       const item=batch.items.find(i=>i.status==="pending");
       if(!item) break;
       try {
-        const session=await processLesson(batch.context,item.sub_id,batch.analysis,batch.forceAsr,`${batch.id}-${item.sub_id}`);
+        const session=await processLesson(batch.context,item.sub_id,batch.analysis,batch.forceAsr,`${batch.id}-${item.sub_id}`,async metadata=>{item.lesson=metadata;await syncBatch(batch);});
         item.status="queued";item.sid=session.id;
       } catch(e){item.status="failed";item.error=e.message;}
       // Re-read cancellation before committing so a stop click is never overwritten.
       const latest=(await chrome.storage.local.get("batch")).batch;
       if(latest?.id!==batch.id) break;
       batch.cancelled=!!latest.cancelled;
+      if(batch.cancelled)for(const entry of batch.items)if(entry.status==="pending")entry.status="cancelled";
       await chrome.storage.local.set({batch});
+      await syncBatch(batch);
     }
-  } finally {batchRunning=false;}
+  } catch { /* The persisted batch is retried by the alarm when the local service returns. */ }
+  finally {batchRunning=false;}
 }
 
 async function broadcastUpdate(message) {
@@ -209,20 +225,26 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         return true;
       }
       case "START_BATCH": {
+        if(startingBatch||batchRunning)throw new Error("正在导入课程，请稍候再试");
+        startingBatch=true;
+        try{
         const previous=(await chrome.storage.local.get("batch")).batch;
         if(previous&&!previous.cancelled&&previous.items.some(i=>i.status==="pending")) throw new Error("上一批课程仍在导入，请等待或停止后再试");
         const context=await SchoolAPI.context(message.tabId);
         const ids=[...new Set(message.subIds||[])].filter(x=>/^\d+$/.test(x)).slice(0,200);
         if(!ids.length) throw new Error("请选择要处理的课时");
-        const batch={id:crypto.randomUUID(),context,analysis:!!message.analysis,forceAsr:!!message.forceAsr,items:ids.map(sub_id=>({sub_id,status:"pending"})),cancelled:false};
+        await syncBatch(previous);
+        const batch={id:crypto.randomUUID(),context,analysis:!!message.analysis,forceAsr:!!message.forceAsr,items:ids.map(sub_id=>({sub_id,status:"pending",lesson:message.lessons?.find(l=>l.sub_id===sub_id)})),cancelled:false};
+        await syncBatch(batch);
         await chrome.storage.local.set({batch});
         await chrome.alarms.create("batch",{periodInMinutes:0.5});
         void runBatch();return batch;
+        }finally{startingBatch=false;}
       }
       case "BATCH_STATE": return (await chrome.storage.local.get("batch")).batch||null;
       case "STOP_BATCH": {
         const {batch}=await chrome.storage.local.get("batch");
-        if(batch){batch.cancelled=true;await chrome.storage.local.set({batch});}return true;
+        if(batch){batch.cancelled=true;for(const item of batch.items)if(item.status==="pending")item.status="cancelled";await chrome.storage.local.set({batch});await syncBatch(batch);}return true;
       }
       case "ATTACH_REPLAY": {
         const session=await A.api(`/api/sessions/${message.sid}`);

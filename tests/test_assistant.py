@@ -77,6 +77,39 @@ class APITests(unittest.TestCase):
         self.assertTrue(Path(setup["extension_path"]).joinpath("manifest.json").is_file())
         self.assertNotIn(self.settings.data["token"], json.dumps(setup))
 
+    def test_import_failures_are_durable_and_independent_of_the_next_batch(self):
+        item = {k: v for k, v in LESSON.items() if k != "mode"}
+        item.update(request_id="batch-one-686882", status="pending")
+        self.assertEqual(self.client.post("/api/imports", json={"items": [item]}).status_code, 200)
+        item.update(status="failed", error="学校接口未授权")
+        self.client.post("/api/imports", json={"items": [item]})
+        self.client.post("/api/imports", json={"items": [{**item, "request_id": "batch-two-686882", "status": "pending", "error": ""}]})
+        reopened = Store(self.settings.root)
+        try:
+            self.assertEqual(len(reopened.imports()), 2)
+            self.assertTrue(any(i["status"] == "failed" and i["error"] == "学校接口未授权" for i in reopened.imports()))
+        finally:
+            reopened.db.close()
+
+    def test_import_success_requires_matching_session_and_cannot_regress(self):
+        item = {k: v for k, v in LESSON.items() if k != "mode"}
+        item.update(request_id="batch-686882", status="queued")
+        self.assertEqual(self.client.post("/api/imports", json={"items": [item]}).status_code, 400)
+        sid = self.create(request_id=item["request_id"])
+        item["sid"] = sid
+        self.assertEqual(self.client.post("/api/imports", json={"items": [item]}).status_code, 200)
+        self.client.post("/api/imports", json={"items": [{**item, "status": "pending", "sid": None}]})
+        self.assertEqual(self.client.get("/api/imports").json()[0]["status"], "queued")
+        self.assertEqual(self.client.post("/api/imports", json={"items": [{**item, "request_id": "wrong-session"}]}).status_code, 400)
+
+    def test_import_journal_checks_origin_identity_and_does_not_accept_secrets(self):
+        item = {k: v for k, v in LESSON.items() if k != "mode"}
+        item["request_id"] = "test-import"
+        self.assertEqual(self.client.get("/api/imports", headers={"Authorization": ""}).status_code, 401)
+        self.assertEqual(self.client.post("/api/imports", json={"items": [{**item, "sub_id": "999"}]}).status_code, 400)
+        self.assertEqual(self.client.post("/api/imports", json={"items": [{**item, "source_url": "https://example.com/private.mp4"}]}).status_code, 422)
+        self.assertEqual(self.client.get("/api/imports").json(), [])
+
     def test_local_dashboard_cookie_requires_same_origin(self):
         page = self.client.get("/")
         self.assertIn("HttpOnly", page.headers["set-cookie"])
