@@ -239,13 +239,16 @@ class ManifestTests(unittest.TestCase):
         manifest_path = Path(__file__).parents[1] / "extension" / "manifest.json"
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         self.assertEqual(manifest["manifest_version"], 3)
-        self.assertEqual(manifest["version"], "0.2.0")
+        self.assertEqual(manifest["version"], "0.5.0")
         self.assertNotIn("<all_urls>", manifest.get("host_permissions", []))
         self.assertIn("scripting", manifest["permissions"])
         self.assertEqual(
             manifest["host_permissions"],
-            [f"{INTERNAL}/*", f"{EXTERNAL}/*"],
+            [f"{INTERNAL}/*", f"{EXTERNAL}/*", "http://127.0.0.1/*"],
         )
+        self.assertNotIn("cookies", manifest["permissions"])
+        self.assertNotIn("debugger", manifest["permissions"])
+        self.assertEqual(manifest["minimum_chrome_version"], "116")
 
 
 if __name__ == "__main__":

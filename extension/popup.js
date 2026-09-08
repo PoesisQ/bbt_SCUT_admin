@@ -132,7 +132,8 @@ function startDownload(blob, filename) {
   return new Promise((resolve, reject) => {
     chrome.downloads.download({ url, filename, saveAs: false }, (downloadId) => {
       const error = chrome.runtime.lastError;
-      URL.revokeObjectURL(url);
+      // Edge may consume the blob asynchronously after allocating a download ID.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
       if (error || downloadId === undefined) {
         reject(
           new RequestError(

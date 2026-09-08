@@ -53,10 +53,9 @@ def main() -> None:
         "Python 单元测试",
         [sys.executable, "-m", "unittest", "discover", "-s", "tests", "-v"],
     )
-    javascript_files = ["extension/popup.js"]
+    javascript_files = [str(path.relative_to(root)) for path in sorted((root / "extension").glob("*.js"))
+                        if path.name != "jszip.min.js"]
     has_extension_core = root.joinpath("extension/core.js").exists()
-    if has_extension_core:
-        javascript_files.append("extension/core.js")
     for javascript_file in javascript_files:
         check(
             f"JavaScript 语法检查：{javascript_file}",
@@ -71,6 +70,9 @@ def main() -> None:
         )
     else:
         print("\n==> JavaScript 单元测试：当前主线尚无 core.test.js，跳过", flush=True)
+    for test_file in sorted((root / "extension").glob("*.test.js")):
+        if test_file.name != "core.test.js":
+            check(f"JavaScript 回归：{test_file.name}", [node, str(test_file.relative_to(root))])
 
     compile_targets = [
         name
@@ -80,6 +82,7 @@ def main() -> None:
             "browser.py",
             "config.py",
             "subtitle.py",
+            "assistant_service",
             "scripts",
             "tests",
         )

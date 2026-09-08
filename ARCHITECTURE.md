@@ -1,5 +1,7 @@
 # 项目实现说明
 
+本页说明原版学校字幕下载逻辑。0.3 新增的 offscreen 音频捕获、本地服务、持久化队列和 DeepSeek 分析见 [ASSISTANT.md](ASSISTANT.md)，对应网站接口的实际观察见 [SITE_FINDINGS.md](SITE_FINDINGS.md)。
+
 ## 概述
 
 本工具从华南理工大学“华园视频”平台提取课程回放字幕，同时支持校内站点 `video.jw.scut.edu.cn` 和 WebVPN 校外站点 `video-jw-443.webvpn.scut.edu.cn`。华园视频在播放课程时，前端通过 API 拉取字幕 JSON 数据，无需逆向加密或破解流媒体协议。

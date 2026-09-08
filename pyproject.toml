@@ -1,9 +1,17 @@
 [project]
 name = "huanyuanshipin-capture"
-version = "0.1.0"
-description = "Add your description here"
+version = "0.5.0"
+description = "SCUT local lecture captions, classroom alerts and course timeline"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "playwright>=1.59.0",
+    "fastapi>=0.115,<1",
+    "uvicorn>=0.34,<1",
+    "httpx>=0.28,<1",
+    "m3u8>=6,<7",
 ]
+
+[project.optional-dependencies]
+# PotPlayer's existing CUDA 12 / cuDNN 8 libraries require CT2 4.4.
+asr = ["faster-whisper>=1.1,<2", "ctranslate2==4.4.0", "numpy>=1.26,<3", "setuptools<81"]

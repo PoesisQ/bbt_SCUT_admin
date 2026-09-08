@@ -20,3 +20,10 @@ docs/
 
 # For Code Review
 .pr-review/
+
+# Local assistant state, recordings, pairing tokens and secrets
+.local/
+.env
+.env.*
+!.env.example
+extension/local-connection.js
