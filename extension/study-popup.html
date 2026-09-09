@@ -1,11 +1,11 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>课堂助手 · SCUT 课堂助手</title><link rel="stylesheet" href="assistant.css"><link rel="stylesheet" href="study-popup.css"></head>
-<body class="popup">
+<body class="popup"><div class="control-surface">
 <header class="popup-head"><a class="brand" href="welcome.html" target="_blank"><span class="brand-mark" data-icon="wave"></span><span>课堂助手<small>SCUT</small></span></a><span id="connection" class="chip warn">检查连接</span></header>
-<main class="stack">
+<main class="stack"><section id="launch-panel" class="launch-card" hidden><strong>让本机接手课堂整理</strong><p>点击启动，无需再找 CMD 文件。</p><a id="launch-service" href="scut-classroom://start" class="launch-button">一键启动本地服务 ↗</a><small>浏览器询问时选择“打开”。首次安装仍需运行一次启动器。</small></section><label id="course-picker" class="course-picker" hidden><span>已打开的课程</span><select id="course-tab" aria-label="选择课程播放页"></select></label>
 <section class="course-card"><div class="course-overline"><span id="scene-label">当前课时</span><span id="source">读取中</span></div><h2 id="course">正在读取课时…</h2><p id="lesson" class="muted"></p></section>
 <div class="setting-row"><div><strong id="analysis-label">同时整理课堂重点</strong><p id="analysis-hint">DeepSeek · 结合上下文提取作业与要求</p></div><label class="toggle"><input type="checkbox" id="analysis" aria-labelledby="analysis-label"><span class="switch"></span></label></div>
-<div class="main-actions">
+<div class="intelligence-status"><div><span class="status-dot"></span><span id="key-indicator">正在读取 Key 状态</span></div><div class="key-tools"><button id="test-key" class="text-button">检测连接</button><button id="key-settings" class="text-button">设置</button></div><p id="key-check-result" hidden></p></div><div class="main-actions">
 <button id="expand-room" class="primary" hidden title="恢复现有课堂，不会重新开始录音">返回课堂实况 ↗</button>
 <button id="process" disabled><span data-icon="play"></span><span>整理本节回放</span><span class="action-arrow">↗</span></button>
 <div class="capture-controls"><button class="primary capture-button" id="start" disabled><span data-icon="wave"></span><span id="start-label">开始实时字幕</span><span class="action-arrow">→</span></button><button id="stop" class="danger" disabled hidden>结束录音并保存</button></div>
@@ -18,4 +18,4 @@
 <div class="recorder-state" hidden><span class="mini-wave" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span><span id="recorder"></span></div>
 <nav class="popup-nav"><button id="dashboard"><span data-icon="grid"></span><span>课程笔记<small>回看内容与完整事项</small></span><span class="nav-arrow">›</span></button><button id="options" title="连接、语音与分析模型设置" aria-label="偏好设置"><span data-icon="settings"></span></button></nav>
 <details class="popup-more"><summary>使用帮助与显示偏好</summary><div class="help-content"><label class="footnote"><input id="auto-open" type="checkbox" checked> 进入学校网站时自动打开助手</label><p class="footnote">关掉面板不会结束录音。再次点击工具栏图标，选择“返回课堂实况”，就能继续看字幕。下课时点击“结束录音并保存”。</p><p class="footnote">回放可以整节整理，无需边听边等。也可以选择实时字幕，播放时请用 1 倍速。</p><p class="footnote">字幕在本机保存。开启智能分析会把本课转写文字发送至 DeepSeek；音频不会发送。录音时请保持学校播放页、浏览器和本地服务运行。</p><div class="row"><button id="recover">恢复暂存上传</button><button id="legacy">原版字幕下载</button></div><p class="footnote"><a href="welcome.html#daily-use" target="_blank">完整使用指南 ↗</a></p></div></details>
-</main><script src="client.js"></script><script src="ui.js"></script><script src="session-view.js"></script><script src="popup-state.js"></script><script src="study-popup.js"></script></body></html>
+</main></div><script src="client.js"></script><script src="ui.js"></script><script src="session-view.js"></script><script src="popup-state.js"></script><script src="study-popup.js"></script></body></html>

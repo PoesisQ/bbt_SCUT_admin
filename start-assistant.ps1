@@ -1,7 +1,14 @@
 ﻿param([switch]$Foreground, [switch]$NoBrowser)
+$scutLaunchMutex = [Threading.Mutex]::new($false, 'Local\SCUTClassroomAssistantLauncher')
+$scutLaunchAcquired = $false
+try {
+    try { $scutLaunchAcquired = $scutLaunchMutex.WaitOne(30000) }
+    catch [Threading.AbandonedMutexException] { $scutLaunchAcquired = $true }
+    if (-not $scutLaunchAcquired) { throw 'Another launcher is still starting the service.' }
 $ErrorActionPreference = 'Stop'
 $scutRoot = $PSScriptRoot
 Set-Location -LiteralPath $scutRoot
+& (Join-Path $scutRoot 'register-launcher.ps1')
 try {
     $scutHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2
 } catch { $scutHealth = $null }
@@ -29,4 +36,8 @@ Write-Host 'Edge 加载扩展目录：' (Join-Path $scutRoot 'extension')
 Write-Host '首次连接口令：' (Join-Path $scutRoot '.local\connection.txt')
 if (-not $NoBrowser) {
     Start-Process 'http://127.0.0.1:8765/'
+}
+} finally {
+    if ($scutLaunchAcquired) { $scutLaunchMutex.ReleaseMutex() }
+    $scutLaunchMutex.Dispose()
 }

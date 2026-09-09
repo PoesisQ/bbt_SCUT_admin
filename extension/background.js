@@ -92,12 +92,13 @@ async function processLesson(context, subId, analysis, forceAsr, requestId, onMe
   if(!forceAsr) items=ScutSubtitleCore.extractSubtitleItems(await SchoolAPI.get(context,"subtitle",subId)).filter(s=>typeof s.Text==="string"&&Number.isFinite(Number(s.BeginSec)));
   const sources=ScutStudy.mediaSources(info,context.origin).filter(s=>s.kind==="replay");
   if(!items.length&&!sources.length) throw new Error("此课时尚无字幕和可用回放源，可在播放页尝试实时识别");
-  const session=await A.api("/api/sessions",{method:"POST",body:{...metadata,request_id:requestId,mode:items.length?"subtitle":"replay",analysis,
+  const session=await A.api("/api/sessions",{method:"POST",body:{...metadata,request_id:requestId,mode:items.length?"subtitle":"replay",analysis,force_new:forceAsr,
     ...(items.length?{}:{source_url:sources[0].url})}});
   if(items.length&&!session.stopped) {
     try {await A.api(`/api/sessions/${session.id}/subtitles`,{method:"POST",body:{items:items.map(s=>({BeginSec:Number(s.BeginSec),EndSec:s.EndSec==null?Number(s.BeginSec)+5:Number(s.EndSec),Text:s.Text}))}});}
     catch(error){await A.api(`/api/sessions/${session.id}/cancel`,{method:"POST"}).catch(()=>{});throw error;}
   }
+  if(session.reused&&analysis&&session.stopped&&session.analysis_status==="idle")await A.api(`/api/sessions/${session.id}/analyze`,{method:"POST"});
   return session;
 }
 

@@ -1,11 +1,12 @@
 const A=AssistantClient,L=CourseLibrary,$=id=>document.getElementById(id),isExtension=!!globalThis.chrome?.runtime?.id;
-let sessions=[],imports=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",configured=false;
+let sessions=[],imports=[],trashed=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",configured=false;
 const params=new URLSearchParams(location.search);
 if(/^[a-f0-9]{32}$/.test(params.get("session")||""))selected=params.get("session");
 if(/^\d+$/.test(params.get("course")||""))course=params.get("course");
 const labels={queued:"等待本地处理",recording:"正在录音",stopping:"正在保存字幕",downloading:"下载音轨",transcribing:"本地转写",processing:"处理字幕",analyzing:"整理笔记",complete:"字幕已保存",failed:"字幕处理失败",cancelled:"已停止任务",interrupted:"录制中断"};
 function node(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
 function clock(sec){const n=Math.max(0,Math.floor(sec||0));return [Math.floor(n/3600),Math.floor(n%3600/60),n%60].map(x=>String(x).padStart(2,"0")).join(":");}
+function versionLabel(s){return (s.source_label||"字幕")+" · "+(s.coverage?.length?s.coverage.map(([a,b])=>clock(a)+"–"+clock(b)).join(" / "):labels[s.status]||s.status)+(s.time_basis==="capture"?" · "+new Date(s.created_at*1000).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}):"");}
 function status(text,error=false){$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
 function seek(sec){if(detail.time_basis==="capture")return node("span",clock(sec),"muted");const url=new URL(detail.page_url);url.searchParams.set("note_play",Math.floor(sec));const a=node("a",clock(sec)+" ↗");a.href=url.href;a.target="_blank";a.rel="noopener noreferrer";a.title="从此处打开学校回放";return a;}
 async function act(button,fn){button.disabled=true;try{await fn();}catch(e){status(e.message,true);}finally{button.disabled=false;if(detail)renderAction();}}
@@ -22,35 +23,38 @@ function navigate(id=null){
 }
 function showView(view){for(const item of document.querySelectorAll("[data-view]")){const on=item.dataset.view===view;item.classList.toggle("active",on);item.setAttribute("aria-selected",String(on));$("view-"+item.dataset.view).hidden=!on;}}
 function openLesson(id,view="summary"){navigate(id);showView(view);}
-function courseButton(id,title,count,notes){const b=node("button",undefined,"course-choice"+(course===id?" active":""));b.append(node("strong",title),node("small",count+" 份记录 · "+notes+" 份笔记"));b.setAttribute("aria-pressed",String(course===id));b.onclick=()=>{course=id;navigate();};return b;}
+function courseButton(id,title,count,notes){const b=node("button",undefined,"course-choice"+(course===id?" active":""));b.append(node("strong",title),node("small",count+" 节课 · "+notes+" 份笔记"));b.setAttribute("aria-pressed",String(course===id));b.onclick=()=>{course=id;navigate();};return b;}
 function renderLibrary(){
-  const records=[...sessions,...L.importRows(imports)];
+  const records=L.lessons([...sessions,...L.importRows(imports)]);
   const groups=L.groups(records),chosen=groups.find(g=>g.id===course),all=chosen?.lessons||records;
-  const rail=$("course-list");rail.replaceChildren(courseButton("","全部课程",records.length,sessions.filter(L.hasNotes).length));
+  const rail=$("course-list");rail.replaceChildren(courseButton("","全部课程",records.length,records.filter(L.hasNotes).length));
   for(const g of groups)rail.append(courseButton(g.id,g.title,g.lessons.length,g.ready));
   $("course-title").textContent=chosen?.title||"全部课程";
-  const pending=all.filter(L.pending).length;
-  $("course-meta").textContent=all.length+" 份课堂记录 · "+all.filter(L.hasNotes).length+" 份完整笔记"+(pending?" · "+pending+" 份待整理":"");
+  const pending=all.filter(s=>s.lesson_pending).length;
+  $("course-meta").textContent=all.length+" 节课 · "+all.filter(L.hasNotes).length+" 份完整笔记"+(pending?" · "+pending+" 份待整理":"");
   document.querySelector('[data-filter="pending"]').textContent="待整理"+(pending?" "+pending:"");
   const cloud=$("topic-cloud");cloud.replaceChildren();
   if(filter==="lessons"&&chosen){for(const t of chosen.topics.slice(0,12)){const b=node("button",t,"topic-chip");b.onclick=()=>{$("search").value=t;renderLibrary();};cloud.append(b);}}
   const target=$("lesson-grid");target.replaceChildren();
-  if(filter==="events"){
+  if(filter==="trash"){
+    for(const s of trashed.filter(s=>(!course||s.course_id===course)&&matches(s.title))){const card=node("article",undefined,"note-card import-card");card.append(node("div",s.course_title,"note-meta"),node("h3",s.title),node("p","已移出课程。恢复后会重新检查时间覆盖关系。"));const b=node("button","恢复这份字幕");b.onclick=()=>act(b,async()=>{await A.api(`/api/sessions/${s.id}/restore`,{method:"POST"});await refresh();});card.append(b);target.append(card);}
+  }else if(filter==="events"){
     const events=(chosen?[chosen]:groups).flatMap(g=>g.events.map(e=>({...e,course:g.title}))).filter(matches).sort((a,b)=>a.category.localeCompare(b.category)||a.start-b.start);
     for(const e of events){const card=node("article",undefined,"library-event");
       card.append(node("small",e.label+" · "+e.course+" · "+e.lesson),node("p",e.message),node("small","原文："+e.evidence));
       const b=node("button","查看本课事项 ↗");b.onclick=()=>openLesson(e.sid,"events");card.append(b);target.append(card);
     }
   }else{
-    const rows=all.filter(s=>(filter!=="pending"||L.pending(s))&&matches([s.course_title,s.title,s.summary,s.important_events])).sort((a,b)=>b.start_at-a.start_at||b.created_at-a.created_at);
+    const rows=all.filter(s=>(filter!=="pending"||s.lesson_pending)&&matches([s.course_title,s.title,s.summary,s.important_events])).sort((a,b)=>b.start_at-a.start_at||b.created_at-a.created_at);
     for(const s of rows){
       if(s.isImport){const card=node("article",undefined,"note-card import-card");card.append(node("div",s.course_title,"note-meta"),node("h3",s.title),node("span",s.status==="failed"?"导入未完成":"正在读取学校数据","note-state pending"),node("p",s.error||"尚未交给本地处理。请保持浏览器、学校课时标签页和本地服务运行。"));
         const link=node("a",s.status==="failed"?"返回本节课重新导入 ↗":"打开学校课时 ↗","text-button");link.href=s.page_url;link.target="_blank";link.rel="noopener noreferrer";card.append(link);target.append(card);continue;}
       const card=node("button",undefined,"note-card"),titles=L.titles(s);
       const state=L.busy(s)?"整理中 "+(s.analysis_progress||""):s.analysis_status==="failed"?"笔记待续":L.hasNotes(s)?"笔记就绪":labels[s.status]||s.status;
-      card.append(node("div",s.course_title+" · "+s.title,"note-meta"),node("h3",s.summary?.headline||titles.slice(0,2).join(" · ")||s.title));
+      card.append(node("div",s.course_title,"note-meta"),node("div",s.title,"lesson-date"),node("h3",s.summary?.headline||titles.slice(0,2).join(" · ")||"本课字幕"));
+      const unfinished=s.versions.find(v=>v.isImport);if(unfinished)card.append(node("p",unfinished.error?"另一次导入未完成："+unfinished.error:"正在读取本课的新字幕来源，请保持学校课时页面打开。","import-summary"));
       card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?"字幕已保存，可以从中断处继续生成笔记。":s.segment_count?"已有字幕。生成笔记后，这里会显示本课知识点与内容概览。":s.progress||"等待课程字幕。")).slice(0,180)));
-      const footer=node("footer");footer.append(node("span",state,"note-state"+(s.analysis_status==="failed"?" failed":L.hasNotes(s)?"":" pending")),node("span",s.event_count+" 条事项 · 查看 →"));card.append(footer);card.onclick=()=>openLesson(s.id);target.append(card);
+      const footer=node("footer");footer.append(node("span",state,"note-state"+(s.analysis_status==="failed"?" failed":L.hasNotes(s)?"":" pending")),node("span",s.record_count+" 份字幕 · 查看课时 →"));card.append(footer);card.onclick=()=>openLesson(s.id);target.append(card);
     }
   }
   if(!target.children.length){const empty=node("div",undefined,"library-empty");empty.append(node("h3",sessions.length?(filter==="events"?"暂无匹配的重要事项":filter==="pending"?"没有待整理的记录":"没有匹配的内容"):"还没有课堂记录"),node("p",sessions.length?"可以切换课程或清除搜索条件。":"在学校页面开始课堂字幕，或导入已结束的课程回放。"));target.append(empty);}
@@ -63,10 +67,12 @@ function renderAction(){
   $("regenerate").hidden=!detail.summary;$("regenerate").disabled=L.busy(detail)||audioBusy||!detail.stopped;
   $("repair").hidden=detail.mode==="subtitle"||detail.status==="cancelled";$("repair").disabled=audioBusy||!detail.stopped;
   $("retry").hidden=!detail.jobs.some(j=>j.lane!=="analysis"&&j.state==="failed")||detail.status==="cancelled";
-  $("attach").hidden=!isExtension||detail.time_basis==="capture";$("cancel").hidden=!audioBusy;
+  $("attach").hidden=!isExtension||detail.time_basis==="capture";$("cancel").hidden=!audioBusy&&detail.status!=="interrupted";$("delete-record").disabled=!detail.stopped||detail.jobs.some(j=>["pending","running"].includes(j.state));$("delete-record").title=$("delete-record").disabled?"请先结束录音或停止任务，再移到回收站":"所选字幕及其笔记可恢复";
 }
 function renderDetail(){
   if(!detail)return;
+  const versions=$("lesson-versions");versions.replaceChildren();
+  for(const s of detail.versions||[]){const b=node("button",versionLabel(s),"version-choice"+(s.id===detail.id?" active":""));b.setAttribute("aria-pressed",String(s.id===detail.id));b.onclick=()=>navigate(s.id);versions.append(b);}
   $("detail").hidden=false;$("browse").hidden=true;
   $("detail-course").textContent=detail.course_title+" · "+detail.title;$("detail-title").textContent=detail.summary?.headline||detail.title;
   $("detail-meta").textContent=(labels[detail.status]||detail.status)+" · "+detail.segments.length+" 条字幕 · "+(detail.time_basis==="capture"?"时间从本次录音开始":"时间对应原视频");
@@ -120,16 +126,16 @@ function renderDetail(){
   for(const s of detail.segments){const el=node("div",undefined,"segment");el.append(seek(s.start),node("span",SessionView.clean(s)));transcript.append(el);}transcript.scrollTop=scroll;
   renderAction();
 }
-async function refreshDetail(){if(!selected)return;const id=selected;try{const value=await A.api("/api/sessions/"+id);if(id!==selected)return;if(value.updated_at!==detailStamp){detail=value;detailStamp=value.updated_at;renderDetail();}}catch(e){status(e.message,true);}}
+async function refreshDetail(){if(!selected)return;const id=selected;try{const value=await A.api("/api/sessions/"+id);if(id!==selected)return;if(value.deleted_at){navigate();status("这份字幕已移到回收站，可恢复后查看。");return;}if(value.superseded_by){navigate(value.superseded_by);return;}const stamp=JSON.stringify([value.updated_at,value.versions]);if(stamp!==detailStamp){detail=value;detailStamp=stamp;renderDetail();}}catch(e){status(e.message,true);}}
 async function refresh(){
   if(loading)return;loading=true;
   try{
-    const result=await Promise.all([A.api("/api/sessions"),A.api("/api/settings"),A.api("/api/imports")]);
-    sessions=result[0];configured=result[1].deepseek_configured;imports=result[2];
+    const result=await Promise.all([A.api("/api/sessions"),A.api("/api/settings"),A.api("/api/imports"),A.api("/api/sessions?trash=true")]);
+    sessions=result[0];configured=result[1].deepseek_configured;imports=result[2];trashed=result[3];
     $("health").textContent="本地已连接";$("health").className="chip";
     const live=sessions.find(s=>s.mode==="live"&&!s.stopped&&s.status==="recording");
     $("current-class").hidden=!live;if(live)$("current-class-title").textContent=live.course_title+" · 正在后台录音";
-    const stamp=JSON.stringify([sessions,imports]);
+    const stamp=JSON.stringify([sessions,imports,trashed]);
     if(stamp!==listStamp){listStamp=stamp;renderLibrary();}
     await refreshDetail();if(detail)renderAction();
     if(isExtension){const batch=await A.send("BATCH_STATE");$("stop-batch").hidden=!batch||batch.cancelled||!batch.items.some(i=>i.status==="pending");if(batch)$("batch-status").textContent=(batch.cancelled?"已停止继续导入 · ":"")+batch.items.filter(i=>i.status==="queued").length+"/"+batch.items.length+" 节已导入\n"+batch.items.filter(i=>i.status==="failed").map(i=>i.sub_id+"："+i.error).join("\n");}
@@ -146,6 +152,7 @@ $("open-import").onclick=()=>$("import-dialog").showModal();
 $("close-import").onclick=()=>$("import-dialog").close();
 $("repair").onclick=()=>act($("repair"),async()=>{const result=await A.api("/api/sessions/"+selected+"/repair",{method:"POST"});status("已安排 "+result.repair_count+" 段音频重新转写，旧字幕已备份。");detailStamp=0;await refresh();});
 $("export").onclick=()=>act($("export"),()=>A.download(selected));
+$("delete-record").onclick=()=>act($("delete-record"),async()=>{await A.api(`/api/sessions/${selected}/delete`,{method:"POST"});course=detail.course_id;navigate();await refresh();status("已将这份字幕及其笔记移到回收站，可以恢复。其他来源保留。");});
 async function analyze(restart=false){if(!configured){location.href="options.html#intelligence";return;}await A.api("/api/sessions/"+selected+"/analyze"+(restart?"?restart=true":""),{method:"POST"});detailStamp=0;await refresh();}
 $("reanalyze").onclick=()=>act($("reanalyze"),()=>analyze());
 $("regenerate").onclick=()=>act($("regenerate"),()=>analyze(true));

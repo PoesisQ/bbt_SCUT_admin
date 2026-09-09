@@ -1,6 +1,18 @@
 const test=require("node:test"),assert=require("node:assert/strict"),L=require("./library-core.js");
 const lesson={id:"a",course_id:"1",course_title:"课程",stopped:true,status:"complete",segment_count:1418,analysis_status:"failed",warning:"输出截断",summary:null};
 
+test("school subtitles, local ASR and capture clips share one lesson card",()=>{
+  const rows=L.lessons([{...lesson,sub_id:"2",id:"a",coverage_seconds:100},{...lesson,sub_id:"2",id:"b",coverage_seconds:200},{...lesson,sub_id:"3",id:"c"}]);
+  assert.equal(rows.length,2);assert.equal(rows[0].id,"b");assert.equal(rows[0].record_count,2);assert.equal(rows[0].versions.length,2);
+});
+
+test("grouping preserves event links from every source and prefers full lecture coverage",()=>{
+  const partial={...lesson,id:"p",sub_id:"2",time_basis:"video",coverage_seconds:30,analysis_status:"complete",summary:{headline:"局部片段"},important_events:[{start:1,category:"assignment",message:"作业要求"}]};
+  const full={...lesson,id:"f",sub_id:"2",time_basis:"video",coverage_seconds:9000,important_events:[{start:5,category:"schedule",message:"下周安排"}]};
+  const rows=L.lessons([partial,full]);assert.equal(rows[0].id,"f");
+  const events=L.groups(rows)[0].events;assert.equal(events.length,2);assert.equal(events.find(e=>e.category==="assignment").sid,"p");
+});
+
 test("failed and pending imports appear without subtitles and survive unrelated batches",()=>{
   const imports=[{course_id:"1",sub_id:"10",status:"failed",created_at:1},{course_id:"1",sub_id:"11",status:"pending",created_at:2}];
   let rows=L.importRows(imports);assert.equal(rows.length,2);assert.ok(rows.every(L.pending));assert.equal(L.groups(rows)[0].lessons.length,2);

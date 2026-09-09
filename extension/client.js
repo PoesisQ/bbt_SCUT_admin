@@ -1,5 +1,6 @@
 /* Shared by trusted extension pages and the loopback dashboard. Never injected into the school page. */
 globalThis.AssistantClient = {
+  launchURL: "scut-classroom://start",
   base: "http://127.0.0.1:8765",
   async connection() {
     if (globalThis.chrome?.storage?.local) return chrome.storage.local.get({token:"", desktopAlerts:false});
@@ -20,7 +21,7 @@ globalThis.AssistantClient = {
         ...(body !== undefined ? {"Content-Type":raw?"audio/wav":"application/json"}:{})},
         body:body===undefined?undefined:raw?body:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});
     } catch {
-      throw new Error("无法连接本地服务，请运行 start-assistant.ps1，并检查连接口令");
+      throw new Error("本地服务未启动。点击“一键启动本地服务”，等待连接恢复。");
     }
     if (!response.ok) {
       const result = await response.json().catch(()=>({}));

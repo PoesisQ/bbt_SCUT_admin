@@ -21,6 +21,7 @@ from .manager import Manager, append_segments
 from .media import validate_media_url
 from .settings import ROOT, Settings, atomic_json
 from .store import Store
+from . import connection_check
 
 
 class Lesson(BaseModel):
@@ -33,6 +34,7 @@ class Lesson(BaseModel):
     start_at: float = Field(default=0, ge=0, allow_inf_nan=False)
     mode: Literal["live", "replay", "subtitle"]
     analysis: bool = False
+    force_new: bool = False
     request_id: str | None = Field(default=None, pattern=r"^[a-zA-Z0-9_-]{1,100}$")
     time_basis: Literal["capture", "video"] = "video"
     source_url: str | None = Field(default=None, max_length=8000)
@@ -105,6 +107,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
     settings = settings or Settings()
     store = store or Store(settings.root)
     manager = manager or Manager(settings, store)
+    connection_result = {}
 
     @asynccontextmanager
     async def lifespan(app):
@@ -156,7 +159,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.7.2"}
+        return {"app": "scut-local-assistant", "version": "0.8.0"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -165,7 +168,23 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/api/settings")
     def configuration():
-        return settings.public()
+        cfg = settings.public()
+        try:
+            cfg["deepseek_check"] = connection_result.get(connection_check.identity(settings))
+        except ValueError:
+            cfg["deepseek_check"] = None
+        return cfg
+
+    @app.post("/api/deepseek/check")
+    def check_deepseek():
+        try:
+            key_id = connection_check.identity(settings)
+            result = connection_check.check(settings, getattr(manager.analyzer, "transport", None))
+        except ValueError:
+            return {"ok": False, "message": "本机 Key 无法解密，请在设置中重新保存", "checked_at": time.time()}
+        connection_result.clear()
+        connection_result[key_id] = result
+        return result
 
     @app.get("/api/pairing-token")
     def pairing_token():
@@ -192,7 +211,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
     @app.post("/api/settings")
     def update_configuration(patch: ConfigPatch):
         settings.update(patch.model_dump(exclude_none=True))
-        return settings.public()
+        return configuration()
 
     @app.post("/api/warmup")
     def warmup():
@@ -201,10 +220,11 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
         return manager.asr.diagnostics()
 
     @app.get("/api/sessions")
-    def sessions():
+    def sessions(trash: bool = False):
         return [{k: v for k, v in s.items() if k not in {"segments", "events", "rule_candidates"}} |
                 {"segment_count": len(s["segments"]), "event_count": len(s["events"]),
-                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in store.list()]
+                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in (store.list() if trash else store.records())
+                if (bool(s.get("deleted_at")) and not s.get("deleted_with") if trash else not s.get("superseded_by"))]
 
     @app.get("/api/imports")
     def imports():
@@ -220,34 +240,57 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
                 raise ValueError("尚未创建本地课时，不能标记为已导入")
             if item.sid:
                 session = store.get(item.sid)
-                if any(session.get(key) != getattr(item, key) for key in ("request_id", "course_id", "sub_id")):
+                if any(session.get(key) != getattr(item, key) for key in ("course_id", "sub_id")):
                     raise ValueError("导入记录与本地课时不匹配")
         store.save_imports([item.model_dump() for item in batch.items])
         return {"ok": True}
 
     @app.post("/api/sessions")
     def create(lesson: Lesson):
+        with store.lock:
+            return create_session(lesson)
+
+    def create_session(lesson: Lesson):
         course = parse_course_url(lesson.page_url)
         if course.course_id != lesson.course_id or course.sub_id != lesson.sub_id:
             raise ValueError("课时信息与页面 URL 不匹配")
         if lesson.request_id:
             existing = next((s for s in store.list() if s.get("request_id") == lesson.request_id), None)
-            if existing:
+            if existing and not existing.get("deleted_at"):
                 return existing
+        if lesson.mode != "live" and not lesson.force_new:
+            existing = next((s for s in store.records() if not s.get("superseded_by")
+                             and s["course_id"] == lesson.course_id and s["sub_id"] == lesson.sub_id
+                             and s["mode"] == lesson.mode and s["status"] not in {"failed", "cancelled", "interrupted"}), None)
+            if existing:
+                return existing | {"reused": True}
         if lesson.mode == "replay":
             if not lesson.source_url:
                 raise ValueError("此课时未发现回放源，请刷新课程页面或使用标签页识别")
             validate_media_url(lesson.source_url, settings.data["media_hosts"])
         if lesson.analysis and not settings.key():
             raise ValueError("请先在设置填写 DeepSeek API Key，或取消勾选 DeepSeek 分析")
-        value = store.create(lesson.model_dump(exclude={"source_url"}))
+        value = store.create(lesson.model_dump(exclude={"source_url", "force_new"}))
         if lesson.mode == "replay":
             store.enqueue(value["id"], "media", {"url": lesson.source_url}, lane="media")
         return value
 
     @app.get("/api/sessions/{sid}")
     def detail(sid: str):
-        return {**store.get(sid), "jobs": store.jobs(sid)}
+        record = store.get(sid)
+        versions = [s for s in store.records() if s["course_id"] == record["course_id"] and s["sub_id"] == record["sub_id"]]
+        current = next((s for s in versions if s["id"] == sid), record)
+        return {**current, "jobs": store.jobs(sid), "versions": [{k: s.get(k) for k in
+                ("id", "title", "source_kind", "source_label", "coverage", "coverage_seconds", "time_basis", "status", "created_at", "superseded_by")}
+                for s in versions if not s.get("superseded_by")]}
+
+    @app.post("/api/sessions/{sid}/delete")
+    def delete_record(sid: str):
+        return store.trash(sid)
+
+    @app.post("/api/sessions/{sid}/restore")
+    def restore_record(sid: str):
+        return store.restore(sid)
 
     @app.post("/api/sessions/{sid}/analysis-preference")
     def analysis_preference(sid: str, body: AnalysisPreference):

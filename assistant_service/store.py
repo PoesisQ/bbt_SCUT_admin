@@ -8,6 +8,7 @@ import uuid
 from pathlib import Path
 
 from .settings import atomic_json
+from .records import annotate
 from subtitle import json_to_srt as to_srt, json_to_text as to_txt
 
 
@@ -46,6 +47,28 @@ class Store:
     def list(self) -> list[dict]:
         with self.lock:
             return [json.loads(r[0]) for r in self.db.execute("SELECT data FROM sessions ORDER BY rowid DESC")]
+
+    def records(self):
+        with self.lock:
+            return annotate(self.list(), self.audio_inputs)
+
+    def trash(self, sid):
+        with self.lock:
+            session = self.get(sid)
+            if (not session["stopped"] and session["mode"] == "live") or any(j["state"] in {"pending", "running"} for j in self.jobs(sid)):
+                raise ValueError("请先结束录音或停止本课任务，等待运行中的任务结束后再删除")
+            stamp = time.time()
+            for record in self.records():
+                if record.get("superseded_by") == sid:
+                    self.update(record["id"], deleted_at=stamp, deleted_with=sid)
+            return self.update(sid, deleted_at=stamp)
+
+    def restore(self, sid):
+        with self.lock:
+            for record in self.list():
+                if record.get("deleted_with") == sid:
+                    self.update(record["id"], deleted_at=None, deleted_with=None)
+            return self.update(sid, deleted_at=None)
 
     def create(self, lesson: dict) -> dict:
         sid = uuid.uuid4().hex

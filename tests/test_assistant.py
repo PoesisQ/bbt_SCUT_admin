@@ -100,7 +100,30 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/imports", json={"items": [item]}).status_code, 200)
         self.client.post("/api/imports", json={"items": [{**item, "status": "pending", "sid": None}]})
         self.assertEqual(self.client.get("/api/imports").json()[0]["status"], "queued")
-        self.assertEqual(self.client.post("/api/imports", json={"items": [{**item, "request_id": "wrong-session"}]}).status_code, 400)
+        self.assertEqual(self.client.post("/api/imports", json={"items": [{**item, "request_id": "reuse-same-lesson"}]}).status_code, 200)
+        self.assertEqual(self.client.post("/api/imports", json={"items": [{**item, "sub_id": "777", "page_url": item["page_url"].replace("686882", "777")}]}).status_code, 400)
+
+    def test_repeated_replay_import_reuses_job_but_explicit_retranscribe_creates_version(self):
+        options = dict(mode="replay", source_url="https://video.jw.scut.edu.cn/play/test.mp4")
+        one = self.create(**options, request_id="first")
+        self.assertEqual(one, self.create(**options, request_id="second"))
+        self.assertEqual(len(self.store.jobs()), 1)
+        self.assertNotEqual(one, self.create(**options, request_id="third", force_new=True))
+
+    def test_delete_and_restore_keep_covered_duplicates_out_of_the_library(self):
+        one = self.create(mode="subtitle")
+        two = self.create(mode="subtitle", force_new=True)
+        for sid in (one, two):
+            self.store.update(sid, stopped=True, status="complete", segments=[{"id": sid+":1", "start": 0, "end": 100, "text": "测试字幕"}])
+        self.assertEqual([s["id"] for s in self.client.get("/api/sessions").json()], [two])
+        self.assertEqual(self.client.post(f"/api/sessions/{two}/delete").status_code, 200)
+        self.assertEqual(self.client.get("/api/sessions").json(), [])
+        self.assertEqual(len(self.client.get("/api/sessions?trash=true").json()), 1)
+        self.assertTrue((self.store.directory(one)/"subtitles.txt").is_file())
+        self.client.post(f"/api/sessions/{two}/restore")
+        self.assertEqual([s["id"] for s in self.client.get("/api/sessions").json()], [two])
+        active = self.create()
+        self.assertEqual(self.client.post(f"/api/sessions/{active}/delete").status_code, 400)
 
     def test_import_journal_checks_origin_identity_and_does_not_accept_secrets(self):
         item = {k: v for k, v in LESSON.items() if k != "mode"}
