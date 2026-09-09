@@ -36,11 +36,11 @@ def annotate(sessions, inputs):
                      "superseded_by": None})
     for s in rows:
         # Capture-relative zero is not a lesson timestamp. Never compare different live recordings.
-        if s.get("time_basis") == "capture" or s["status"] != "complete" or s.get("analysis_status") in {"running", "queued"}:
+        if s.get("time_basis") == "capture" or s["status"] != "complete":
             continue
         peers = [p for p in rows if p["id"] != s["id"] and p["course_id"] == s["course_id"] and p["sub_id"] == s["sub_id"]
                  and p["source_kind"] == s["source_kind"] and p.get("time_basis", "video") == "video"
-                 and p["status"] == "complete" and p["segments"] and p.get("analysis_status") not in {"running", "queued"}
+                 and p["status"] == "complete" and p["segments"]
                  and contains(p["coverage"], s["coverage"])
                  and (not contains(s["coverage"], p["coverage"]) or (p["created_at"], p["id"]) > (s["created_at"], s["id"]))]
         if peers:

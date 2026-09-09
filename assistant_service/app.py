@@ -159,7 +159,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.8.0"}
+        return {"app": "scut-local-assistant", "version": "0.8.1"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -299,7 +299,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
             if body.enabled and not settings.key():
                 raise ValueError("请先配置 DeepSeek API Key")
             if not body.enabled:
-                store.cancel_pending_analysis(sid)
+                store.cancel_pending_analysis(sid, realtime_only=True)
             value = store.update(sid, analysis=body.enabled)
             if body.enabled and not session["stopped"]:
                 manager.maybe_analyze(sid)

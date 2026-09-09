@@ -53,7 +53,7 @@ function renderLibrary(){
       const state=L.busy(s)?"整理中 "+(s.analysis_progress||""):s.analysis_status==="failed"?"笔记待续":L.hasNotes(s)?"笔记就绪":labels[s.status]||s.status;
       card.append(node("div",s.course_title,"note-meta"),node("div",s.title,"lesson-date"),node("h3",s.summary?.headline||titles.slice(0,2).join(" · ")||"本课字幕"));
       const unfinished=s.versions.find(v=>v.isImport);if(unfinished)card.append(node("p",unfinished.error?"另一次导入未完成："+unfinished.error:"正在读取本课的新字幕来源，请保持学校课时页面打开。","import-summary"));
-      card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?"字幕已保存，可以从中断处继续生成笔记。":s.segment_count?"已有字幕。生成笔记后，这里会显示本课知识点与内容概览。":s.progress||"等待课程字幕。")).slice(0,180)));
+      card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?(s.notes_retry_at>Date.now()/1000&&s.notes_auto_attempts<3?"字幕已保存，稍后自动重试，已完成的笔记会复用。":"字幕已保存。自动重试未完成，请查看错误原因。"):s.segment_count?"字幕已保存，将自动整理本课知识点与重要事项。":s.progress||"等待课程字幕。")).slice(0,180)));
       const footer=node("footer");footer.append(node("span",state,"note-state"+(s.analysis_status==="failed"?" failed":L.hasNotes(s)?"":" pending")),node("span",s.record_count+" 份字幕 · 查看课时 →"));card.append(footer);card.onclick=()=>openLesson(s.id);target.append(card);
     }
   }
@@ -100,7 +100,7 @@ function renderDetail(){
   }else{
     const empty=node("div",undefined,"library-empty"),action=L.action({...detail,segment_count:detail.segments.length},configured);
     empty.append(node("h3",busy?"正在阅读本课字幕":detail.analysis_status==="failed"?"笔记生成中断":"本课笔记尚未生成"),
-      node("p",busy?"第一段完成后会自动显示，页面可以关闭。":!configured?"在设置中保存一次 DeepSeek Key，之后无需重复填写。":detail.analysis_status==="failed"?"上方显示了具体原因。点击“继续生成笔记”会复用已经完成的部分。":"点击上方“生成本课笔记”，整理知识点、作业和课堂要求。"));
+      node("p",busy?"第一段完成后会自动显示，页面可以关闭。":!configured?"在设置中保存一次 DeepSeek Key，现有和今后保存的字幕都会自动生成笔记。":detail.analysis_status==="failed"?"上方显示了具体原因。点击“继续生成笔记”会复用已经完成的部分。":"本课已交给后台自动整理，无需点击生成。可以关闭页面，稍后到课程笔记查看。"));
     if(action.disabled&&!busy)empty.append(node("small",action.label));
     summary.append(empty);
   }
@@ -164,7 +164,7 @@ $("load-catalogue").onclick=()=>act($("load-catalogue"),async()=>{
   if(!catalogue.length)throw new Error("未取得课程目录；请检查学校接口或重新打开课程页面");
 });
 $("select-ready").onclick=()=>$("catalogue").querySelectorAll("input:not(:disabled)").forEach(x=>x.checked=true);$("select-none").onclick=()=>$("catalogue").querySelectorAll("input").forEach(x=>x.checked=false);
-$("start-batch").onclick=()=>act($("start-batch"),async()=>{const subIds=[...$("catalogue").querySelectorAll("input:checked")].map(i=>i.value);await A.send("START_BATCH",{tabId:Number($("source-tab").value),subIds,lessons:catalogue.map(l=>({...l,course_title:catalogueCourse})),analysis:$("batch-analysis").checked,forceAsr:$("force-asr").checked});status("导入请求已保存，正在读取学校数据。进度和失败原因会保留在待整理中。");await refresh();});
+$("start-batch").onclick=()=>act($("start-batch"),async()=>{const subIds=[...$("catalogue").querySelectorAll("input:checked")].map(i=>i.value);await A.send("START_BATCH",{tabId:Number($("source-tab").value),subIds,lessons:catalogue.map(l=>({...l,course_title:catalogueCourse})),analysis:false,forceAsr:$("force-asr").checked});status("导入请求已保存，正在读取学校数据。进度和失败原因会保留在待整理中。");await refresh();});
 $("stop-batch").onclick=()=>act($("stop-batch"),async()=>{await A.send("STOP_BATCH");status("已停止继续导入。已入队的本地课时可逐个取消。");});
 (async()=>{
   const token=new URLSearchParams(location.hash.slice(1)).get("token");if(token){await A.setConnection(token);history.replaceState(null,"",location.pathname+location.search);}

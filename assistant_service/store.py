@@ -197,9 +197,10 @@ class Store:
             return [{"id": row["id"], **json.loads(row["payload"])} for row in self.db.execute(
                 "SELECT id,payload FROM jobs WHERE session_id=? AND kind='chunk' ORDER BY created", (sid,))]
 
-    def cancel_pending_analysis(self, sid: str):
+    def cancel_pending_analysis(self, sid: str, *, realtime_only=False):
         with self.lock:
-            self.db.execute("UPDATE jobs SET state='cancelled' WHERE session_id=? AND lane='analysis' AND state='pending'", (sid,))
+            self.db.execute("UPDATE jobs SET state='cancelled' WHERE session_id=? AND lane='analysis' AND state='pending'"
+                            + (" AND kind='analyze'" if realtime_only else ""), (sid,))
             self.db.commit()
 
     def cancel(self, sid: str):

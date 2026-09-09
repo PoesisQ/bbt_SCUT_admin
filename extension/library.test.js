@@ -1,6 +1,13 @@
 const test=require("node:test"),assert=require("node:assert/strict"),L=require("./library-core.js");
 const lesson={id:"a",course_id:"1",course_title:"课程",stopped:true,status:"complete",segment_count:1418,analysis_status:"failed",warning:"输出截断",summary:null};
 
+test("saved subtitles wait for automatic notes and retry with a bounded backoff",()=>{
+  assert.deepEqual(L.action({...lesson,analysis_status:"idle"},true),{label:"等待自动生成笔记",disabled:true});
+  assert.equal(L.action({...lesson,notes_retry_at:Date.now()/1000+60,notes_auto_attempts:1},true).label,"稍后自动重试");
+  assert.equal(L.action({...lesson,notes_retry_at:Date.now()/1000+60,notes_auto_attempts:3},true).label,"继续生成笔记");
+  assert.equal(L.action({...lesson,analysis_status:"waiting_key"},false).settings,true);
+});
+
 test("school subtitles, local ASR and capture clips share one lesson card",()=>{
   const rows=L.lessons([{...lesson,sub_id:"2",id:"a",coverage_seconds:100},{...lesson,sub_id:"2",id:"b",coverage_seconds:200},{...lesson,sub_id:"3",id:"c"}]);
   assert.equal(rows.length,2);assert.equal(rows[0].id,"b");assert.equal(rows[0].record_count,2);assert.equal(rows[0].versions.length,2);

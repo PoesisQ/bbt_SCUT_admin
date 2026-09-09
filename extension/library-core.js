@@ -43,7 +43,8 @@
     if(!s.segment_count)return {label:"暂无可分析字幕",disabled:true};
     if(hasNotes(s)&&!s.events_version)return {label:"整理完整事项"};
     if(hasNotes(s))return {label:"笔记已就绪",hidden:true};
-    return {label:s.analysis_status === "failed" || s.summary?.partial ? "继续生成笔记" : "生成本课笔记"};
+    if(s.analysis_status === "failed")return s.notes_retry_at>Date.now()/1000&&s.notes_auto_attempts<3?{label:"稍后自动重试",disabled:true}:{label:"继续生成笔记"};
+    return {label:"等待自动生成笔记",disabled:true};
   }
   const api={groups,lessons,titles,hasNotes,needsNotes,pending,importRows,busy,action};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;

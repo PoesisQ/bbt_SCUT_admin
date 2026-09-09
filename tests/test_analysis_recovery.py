@@ -116,7 +116,7 @@ class AnalysisRecoveryTests(unittest.TestCase):
             self.assertEqual(result["title"], "进程与线程")
             self.assertEqual(result["groups"][0]["topic_indices"], [0, 1])
 
-    def test_disabling_analysis_stops_future_requests_and_keeps_saved_part(self):
+    def test_service_shutdown_stops_future_requests_and_keeps_saved_part(self):
         with tempfile.TemporaryDirectory() as tmp:
             settings = Settings(Path(tmp))
             store = Store(settings.root)
@@ -124,13 +124,13 @@ class AnalysisRecoveryTests(unittest.TestCase):
             store.update(sid, stopped=True, segments=[{"id": str(i), "start": i, "end": i + 1, "text": "字幕" * 1700} for i in range(3)])
             manager = Manager(settings, store)
             def result(*args, **kwargs):
-                store.update(sid, analysis=False)
+                manager.shutdown.set()
                 return {"overview": "已完成的部分", "events": [], "topics": []}
             store.enqueue(sid, "summary", {}, lane="analysis")
             with patch.object(manager.analyzer, "analyze", side_effect=result) as analyze:
                 manager.execute(store.claim("analysis"))
             self.assertEqual(analyze.call_count, 1)
-            self.assertEqual(store.get(sid)["analysis_status"], "paused")
+            self.assertEqual(store.get(sid)["analysis_status"], "running")
             self.assertTrue(store.get(sid)["summary"]["partial"])
             store.db.close()
 

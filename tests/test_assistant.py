@@ -231,6 +231,16 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/sessions", json={**LESSON, "sub_id": "1"}).status_code, 400)
         self.assertEqual(self.client.post("/api/settings", json={"analysis_window": 0}).status_code, 422)
 
+    def test_saving_school_subtitles_automatically_queues_notes_without_live_analysis(self):
+        sid = self.create(mode="subtitle", analysis=False)
+        with patch.object(self.settings, "key", return_value="test-key"):
+            response = self.client.post(f"/api/sessions/{sid}/subtitles", json={"items": [
+                {"BeginSec": 0, "EndSec": 60, "Text": "周五前完成第二章作业"}]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.store.get(sid)["analysis_status"], "queued")
+        self.assertFalse(self.store.get(sid)["analysis"])
+        self.assertEqual([j["kind"] for j in self.store.jobs(sid)], ["summary"])
+
     def test_failed_audio_cannot_appear_completed_and_retry_preserves_work(self):
         sid = self.create()
         self.client.post(f"/api/sessions/{sid}/chunks?seq=0&start=0", content=wav_bytes())

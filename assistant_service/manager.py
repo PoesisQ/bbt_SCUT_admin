@@ -46,6 +46,7 @@ class Manager:
         self.analyzer = analyzer or Analyzer(settings)
         self.shutdown = threading.Event()
         self.threads = []
+        self.last_finalize = 0
 
     def start(self):
         for lane in ("asr", "media", "analysis"):
@@ -61,7 +62,7 @@ class Manager:
             job = self.store.claim(lane)
             if not job:
                 if lane == "asr":
-                    self.finalize()
+                    self.finalize(force=False)
                 self.shutdown.wait(0.4)
                 continue
             self.execute(job)
@@ -85,6 +86,9 @@ class Manager:
                 changes = {"warning" if lane == "analysis" else "error": error}
                 if lane == "analysis":
                     changes["analysis_status"] = "failed"
+                    if job["kind"] == "summary":
+                        attempt = self.store.get(sid).get("notes_auto_attempts", 1)
+                        changes["notes_retry_at"] = time.time() + 60 * 5 ** min(max(attempt - 1, 0), 2)
                 self.store.update(sid, **changes)
 
     def run(self, job):
@@ -155,7 +159,7 @@ class Manager:
             for index, pack in enumerate(packs):
                 if self.store.get(sid)["status"] == "cancelled" or self.shutdown.is_set():
                     return
-                if self.store.get(sid).get("analysis", True) is False:
+                if kind == "analyze" and self.store.get(sid).get("analysis", True) is False:
                     self.store.update(sid, analysis_status="paused")
                     return
                 if self.settings.data["deepseek_model"] != model:
@@ -187,9 +191,6 @@ class Manager:
                         self.execute(urgent)
             update = {"analysis_status": "complete", "warning": ""}
             if kind == "summary":
-                if self.store.get(sid).get("analysis", True) is False:
-                    self.store.update(sid, analysis_status="paused")
-                    return
                 self.store.update(sid, analysis_progress="生成整课概览", analysis_stage="outline")
                 outline = completed.get("outline")
                 if outline is None:
@@ -201,9 +202,6 @@ class Manager:
                 def check_context():
                     current = self.store.get(sid)
                     if current["status"] == "cancelled" or current.get("analysis_reset_at", 0) != reset_at or self.shutdown.is_set():
-                        raise AnalysisPaused()
-                    if current.get("analysis", True) is False:
-                        self.store.update(sid, analysis_status="paused")
                         raise AnalysisPaused()
                     if self.settings.data["deepseek_model"] != model:
                         raise ValueError("分析模型已切换，请使用新模型继续整理本课")
@@ -223,7 +221,7 @@ class Manager:
                 update.update(analysis_progress=f"{len(packs)}/{len(packs)}", analysis_stage="complete")
             with self.store.lock:
                 current = self.store.get(sid)
-                if current.get("analysis_reset_at", 0) == reset_at and current["status"] != "cancelled" and current.get("analysis", True):
+                if current.get("analysis_reset_at", 0) == reset_at and current["status"] != "cancelled" and (kind == "summary" or current.get("analysis", True)):
                     self.store.update(sid, **update)
 
     def maybe_analyze(self, sid):
@@ -241,8 +239,11 @@ class Manager:
                            lane="analysis", priority=0)
         self.store.update(sid, last_analysis_end=end)
 
-    def finalize(self):
+    def finalize(self, *, force=True):
         with self.store.lock:
+            if not force and time.monotonic() - self.last_finalize < 5:
+                return
+            self.last_finalize = time.monotonic()
             for session in self.store.list():
                 sid = session["id"]
                 if session["status"] in {"cancelled", "complete", "failed"}:
@@ -260,14 +261,6 @@ class Manager:
                     continue
                 if not session["stopped"] or any(j["state"] in {"pending", "running"} for j in audio):
                     continue
-                if session.get("analysis"):
-                    summary_jobs = [j for j in jobs if j["kind"] == "summary" and j["created"] >= session.get("analysis_reset_at", 0)]
-                    if not summary_jobs:
-                        self.store.enqueue(sid, "summary", {}, lane="analysis", priority=10, key=f"{sid}-summary-{session.get('analysis_reset_at', 0)}")
-                        self.store.update(sid, status="analyzing")
-                        continue
-                    if self.store.pending(sid, "analysis"):
-                        continue
                 self.store.update(sid, status="complete", progress="处理完成")
                 if not self.settings.data["retain_audio"]:
                     # Only temporary audio/media created inside this generated session directory.
@@ -278,3 +271,43 @@ class Manager:
                             audit = child.with_suffix(".asr.json")
                             if not audit.exists():
                                 child.unlink()
+            self.queue_saved_notes()
+
+    def queue_saved_notes(self):
+        """Reconcile saved subtitles independently of the live reminder preference.
+
+        Call under the store lock. Persist attempt counts so reopening the service
+        cannot endlessly repeat a failing paid request. Successful packs resume
+        from the existing analysis cache.
+        """
+        try:
+            key = self.settings.key()
+        except ValueError:
+            key = ""  # A vault error must not stop the audio worker or subtitle saving.
+        for session in self.store.records():
+            sid = session["id"]
+            if session.get("superseded_by") or not session["stopped"] or session["status"] != "complete":
+                continue
+            if not any(s.get("quality") != "uncertain" for s in session["segments"]):
+                continue
+            summary = session.get("summary")
+            if summary and not summary.get("partial") and session.get("analysis_status") == "complete":
+                continue
+            jobs = self.store.jobs(sid)
+            if any(j["state"] in {"pending", "running"} or (j["lane"] != "analysis" and j["state"] == "failed") for j in jobs):
+                continue
+            if not key:
+                if session.get("analysis_status") != "waiting_key":
+                    self.store.update(sid, analysis_status="waiting_key", analysis_progress="保存 Key 后自动生成笔记")
+                continue
+            generation = hashlib.sha256(json.dumps([self.settings.data["deepseek_model"], key,
+                session.get("analysis_reset_at", 0), session["segments"]], ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+            same = session.get("notes_auto_generation") == generation
+            attempts = session.get("notes_auto_attempts", 0) if same else 0
+            if attempts >= 3 or (same and session.get("notes_retry_at", 0) > time.time()):
+                continue
+            attempt = attempts + 1
+            self.store.enqueue(sid, "summary", {}, lane="analysis", priority=10,
+                               key=f"{sid}-auto-notes-{generation}-{attempt}")
+            self.store.update(sid, analysis_status="queued", analysis_progress="等待自动整理", warning="",
+                              notes_auto_generation=generation, notes_auto_attempts=attempt, notes_retry_at=0)

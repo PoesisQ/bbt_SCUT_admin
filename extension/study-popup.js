@@ -79,14 +79,14 @@ $("expand-room").onclick=()=>action("expand-room",()=>A.openClassroom(tab?.id));
 $("analysis").onchange=async()=>{editing=true;const wanted=$("analysis").checked;
   try{if(activeSession&&!activeSession.stopped)await A.api("/api/sessions/"+activeSession.id+"/analysis-preference",{method:"POST",body:{enabled:wanted}});
     preferences.analysisDefault=wanted;await chrome.storage.local.set({analysisDefault:wanted});
-    show(wanted?"智能分析已开启，并记住下次的选择。":"后续智能分析已关闭，字幕照常保存。");
+    show(wanted?"实时提醒已开启。字幕保存后会自动生成笔记。":"实时提醒已关闭，保存后仍会自动生成笔记。");
   }catch(e){$("analysis").checked=!wanted;show(e.message,true);}finally{editing=false;await recorder();}
 };
 $("start").onclick=()=>action("start",async()=>{await A.send("START_CAPTURE",{tabId:tab.id,analysis:configured&&$("analysis").checked});show("已开始录音。点“返回正在录音的课堂”查看连续字幕。");});
 $("stop").onclick=()=>action("stop",async()=>{const s=await A.send("STOP_CAPTURE");show(s.pending?"正在补传 "+s.pending+" 段音频，请保持本地服务运行。":"录音已结束，剩余字幕和总结会继续保存。");});
 $("recover").onclick=()=>action("recover",async()=>{const s=await A.send("RECOVER_UPLOADS");show(s.error||"待上传音频："+s.pending+" 段",!!s.error);});
 $("auto-open").onchange=async e=>{await chrome.storage.local.set({autoOpenAssistant:e.target.checked});};
-$("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],lessons:[inspection.lesson],analysis:configured&&$("analysis").checked,forceAsr:false});show("导入请求已保存，正在读取学校数据。");});
+$("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],lessons:[inspection.lesson],analysis:false,forceAsr:false});show("导入请求已保存，正在读取学校数据。");});
 (async()=>{preferences=await chrome.storage.local.get({analysisDefault:true,autoOpenAssistant:true});$("analysis").checked=V.analysisEnabled(preferences,null);$("auto-open").checked=preferences.autoOpenAssistant;
   const sourceTab=Number(new URLSearchParams(location.search).get("tab"));
   if(sourceTab>0)tab=await chrome.tabs.get(sourceTab);else [tab]=await chrome.tabs.query({active:true,currentWindow:true});
