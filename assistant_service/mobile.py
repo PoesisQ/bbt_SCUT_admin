@@ -122,11 +122,21 @@ class MobileNotifier:
         if not pairing or not self.settings.data.get("mobile_notifications_enabled"):
             return
         for session in self.store.list():
-            if session.get("mode") != "live" or session.get("deleted_at") or session.get("created_at", 0) < pairing["enabled_at"] - 300:
+            cutoff = pairing["enabled_at"] - 300
+            active = session.get("status") in {"recording", "stopping"}
+            recent = session.get("created_at", 0) >= cutoff
+            if session.get("mode") != "live" or session.get("deleted_at") or (not active and not recent):
                 continue
             for event in session.get("events", []):
                 if event.get("source") != "deepseek" or event.get("category") not in ALERT_CATEGORIES:
                     continue
+                # Pairing may happen halfway through a lecture. Keep listening to that
+                # active session, but do not flood the phone with its earlier events.
+                if active and not recent:
+                    base = session.get("start_at") or session.get("created_at")
+                    start = event.get("start")
+                    if not isinstance(base, (int, float)) or not isinstance(start, (int, float)) or base + start < cutoff:
+                        continue
                 content = json.dumps([event.get("message"), event.get("details")], ensure_ascii=False, sort_keys=True)
                 dedupe = f"{session['id']}:{event['id']}:{hashlib.sha256(content.encode()).hexdigest()[:12]}"
                 self.queue("classroom-alert", {"course": session.get("course_title", "当前课程"),

@@ -1,5 +1,6 @@
 import json
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -49,6 +50,29 @@ class MobileProtocolTests(unittest.TestCase):
                 reopened = MobileNotifier(settings, store)
                 reopened.scan()
                 self.assertEqual(len(reopened.state["outbox"]), 1)
+            store.db.close()
+
+    def test_pairing_during_a_live_class_only_sends_recent_events(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(Path(tmp))
+            store = Store(settings.root)
+            pairing = make_pairing()
+            pairing["enabled_at"] = time.time()
+            settings.data["mobile_notifications_enabled"] = True
+            session = store.create({"mode": "live", "course_id": "1", "sub_id": "2",
+                                    "course_title": "操作系统", "title": "第2-4节", "analysis": False})
+            start_at = pairing["enabled_at"] - 3600
+            store.update(session["id"], created_at=start_at, start_at=start_at, events=[
+                {"id": "old", "category": "attendance", "label": "点名", "message": "之前的点名",
+                 "evidence": "之前的点名", "source": "deepseek", "start": 60},
+                {"id": "recent", "category": "assignment", "label": "作业", "message": "刚布置的作业",
+                 "evidence": "刚布置的作业", "source": "deepseek", "start": 3500},
+            ])
+            with patch.object(settings, "mobile_pairing", return_value=pairing):
+                notifier = MobileNotifier(settings, store)
+                notifier.scan()
+                self.assertEqual(len(notifier.state["outbox"]), 1)
+                self.assertEqual(len(notifier.state["sent"]), 1)
             store.db.close()
 
     def test_outbox_is_removed_only_after_authenticated_relay_receipt(self):
