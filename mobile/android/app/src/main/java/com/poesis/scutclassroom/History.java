@@ -15,4 +15,5 @@ final class History {
         Pairing.prefs(c).edit().putString("history",fresh.toString()).apply(); return true;
     }
     static JSONArray list(Context c){try{return new JSONArray(Pairing.prefs(c).getString("history","[]"));}catch(Exception e){return new JSONArray();}}
+    static void clear(Context c){Pairing.prefs(c).edit().remove("history").apply();}
 }

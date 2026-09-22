@@ -139,9 +139,13 @@ class MobileNotifier:
                         continue
                 content = json.dumps([event.get("message"), event.get("details")], ensure_ascii=False, sort_keys=True)
                 dedupe = f"{session['id']}:{event['id']}:{hashlib.sha256(content.encode()).hexdigest()[:12]}"
-                self.queue("classroom-alert", {"course": session.get("course_title", "当前课程"),
+                payload = {"course": session.get("course_title", "当前课程"),
                     "lesson": session.get("title", ""), "session_id": session["id"],
-                    **{k: event.get(k) for k in ("id", "category", "label", "priority", "message", "details", "evidence", "start", "confidence")}}, dedupe)
+                    **{k: event.get(k) for k in ("id", "category", "label", "priority", "message", "details", "evidence", "start", "confidence")}}
+                base, start = session.get("start_at"), event.get("start")
+                if isinstance(base, (int, float)) and isinstance(start, (int, float)):
+                    payload["occurred_at"] = base + start
+                self.queue("classroom-alert", payload, dedupe)
 
     def flush(self):
         pairing = self.settings.mobile_pairing()
