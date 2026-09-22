@@ -62,6 +62,7 @@ class Settings:
             "hotwords": "", "deepseek_model": "deepseek-v4-flash",
             "deepseek_key_encrypted": "", "analysis_window": 35,
             "media_hosts": [], "retain_audio": False,
+            "mobile_notifications_enabled": False,
         }
         if self.path.exists():
             self.data.update(json.loads(self.path.read_text(encoding="utf-8")))
@@ -106,6 +107,44 @@ class Settings:
                 raise ValueError("本机密钥文件无法读取，请在设置中重新保存 Key") from None
         return protect(encrypted, True) if encrypted else ""
 
+    def _vault_data(self) -> dict:
+        if not self.vault.exists():
+            return {}
+        try:
+            value = json.loads(self.vault.read_text(encoding="utf-8"))
+            return value if isinstance(value, dict) else {}
+        except (ValueError, OSError):
+            raise ValueError("本机密钥文件无法读取，请在设置中重新保存") from None
+
+    def _update_vault(self, **changes):
+        value = self._vault_data()
+        value.update(changes)
+        atomic_json(self.vault, value)
+
+    def mobile_pairing(self) -> dict | None:
+        encrypted = self._vault_data().get("mobile_pairing_encrypted", "")
+        if not encrypted:
+            return None
+        try:
+            value = json.loads(protect(encrypted, True))
+        except (ValueError, json.JSONDecodeError):
+            raise ValueError("手机提醒配对信息无法解密，请重新配对") from None
+        required = {"relay_url", "app_id", "channel", "auth_token", "e2e_key", "enabled_at"}
+        return value if isinstance(value, dict) and required <= set(value) else None
+
+    def save_mobile_pairing(self, value: dict):
+        self._update_vault(mobile_pairing_encrypted=protect(json.dumps(value, separators=(",", ":"))))
+        self.data["mobile_notifications_enabled"] = True
+        self.save()
+
+    def clear_mobile_pairing(self):
+        self._update_vault(mobile_pairing_encrypted="")
+        self.data["mobile_notifications_enabled"] = False
+        self.save()
+
+    def mobile_enabled(self) -> bool:
+        return bool(self.data.get("mobile_notifications_enabled") and self.mobile_pairing())
+
     def public(self) -> dict:
         result = {k: v for k, v in self.data.items() if k not in {"token", "deepseek_key_encrypted"}}
         try:
@@ -115,16 +154,22 @@ class Settings:
             result["deepseek_configured"] = False
             result["deepseek_key_status"] = "unreadable"
         result["deepseek_key_location"] = str(self.vault)
+        try:
+            result["mobile_notifications_configured"] = bool(self.mobile_pairing())
+            result["mobile_notifications_status"] = "enabled" if self.mobile_enabled() else "disabled"
+        except ValueError:
+            result["mobile_notifications_configured"] = False
+            result["mobile_notifications_status"] = "unreadable"
         result["output_path"] = str(self.root / "sessions")
         return result
 
     def update(self, patch: dict):
         with self.lock:
             if key := str(patch.get("deepseek_key") or "").strip():
-                atomic_json(self.vault, {"deepseek_key_encrypted": protect(key)})
+                self._update_vault(deepseek_key_encrypted=protect(key))
                 self.data["deepseek_key_encrypted"] = ""
             if patch.get("clear_deepseek_key"):
-                atomic_json(self.vault, {"deepseek_key_encrypted": ""})
+                self._update_vault(deepseek_key_encrypted="")
                 self.data["deepseek_key_encrypted"] = ""
             allowed = set(self.data) - {"token", "deepseek_key_encrypted"}
             for k, v in patch.items():

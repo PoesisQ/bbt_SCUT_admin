@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import base64
 import re
 import secrets
 import time
@@ -13,12 +14,15 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+import qrcode
+import qrcode.image.svg
 
 from config import parse_course_url
 from .analysis import rule_events
 from .asr import validate_wav, repetitive_segments
 from .manager import Manager, append_segments
 from .media import validate_media_url
+from .mobile import make_pairing, pairing_code, registry_entry
 from .settings import ROOT, Settings, atomic_json
 from .store import Store
 from . import connection_check
@@ -55,6 +59,7 @@ class ConfigPatch(BaseModel):
     clear_deepseek_key: bool = False
     analysis_window: int | None = Field(default=None, ge=15, le=120)
     retain_audio: bool | None = None
+    mobile_notifications_enabled: bool | None = None
     media_hosts: list[str] | None = Field(default=None, max_length=20)
 
     @field_validator("media_hosts")
@@ -63,6 +68,11 @@ class ConfigPatch(BaseModel):
         if values and any(not re.fullmatch(r"[a-zA-Z0-9.-]{1,253}", x) or x in {"localhost", "127.0.0.1"} for x in values):
             raise ValueError("请输入准确域名，不要填写 URL 或通配符")
         return [v.lower() for v in values] if values is not None else values
+
+
+class MobileEnabled(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    enabled: bool
 
 
 class ImportRecord(BaseModel):
@@ -159,11 +169,12 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.8.1"}
+        return {"app": "scut-local-assistant", "version": "0.9.0"}
 
     @app.get("/api/health")
     def diagnostics():
         return {"ok": True, "asr": manager.asr.diagnostics(), "deepseek_configured": settings.public()["deepseek_configured"],
+                "mobile": manager.mobile.status(),
                 "jobs": [j for j in store.jobs() if j["state"] in {"pending", "running", "failed"}]}
 
     @app.get("/api/settings")
@@ -212,6 +223,59 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
     def update_configuration(patch: ConfigPatch):
         settings.update(patch.model_dump(exclude_none=True))
         return configuration()
+
+    def mobile_configuration(include_secret=False):
+        value = manager.mobile.status()
+        pairing = settings.mobile_pairing()
+        if pairing and include_secret:
+            qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=2)
+            qr.add_data(pairing_code(pairing)); qr.make(fit=True)
+            image = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
+            svg = io.BytesIO(); image.save(svg)
+            value.update(pairing_code=pairing_code(pairing), server_registration=registry_entry(pairing),
+                         pairing_qr="data:image/svg+xml;base64," + base64.b64encode(svg.getvalue()).decode("ascii"),
+                         app_id=pairing["app_id"], relay_url=pairing["relay_url"])
+        return value
+
+    @app.get("/api/mobile")
+    def mobile_status():
+        return mobile_configuration(include_secret=True)
+
+    @app.post("/api/mobile/setup")
+    def mobile_setup():
+        if not settings.key():
+            raise ValueError("请先配置 DeepSeek Key，再开启手机课堂提醒")
+        pairing = settings.mobile_pairing()
+        if not pairing:
+            settings.save_mobile_pairing(make_pairing())
+        return mobile_configuration(include_secret=True)
+
+    @app.post("/api/mobile/enabled")
+    def mobile_enabled(body: MobileEnabled):
+        if body.enabled and not settings.mobile_pairing():
+            raise ValueError("请先生成手机配对码")
+        if body.enabled and not settings.key():
+            raise ValueError("手机提醒需要 DeepSeek Key 才能判断课堂事件")
+        settings.update({"mobile_notifications_enabled": body.enabled})
+        return mobile_configuration()
+
+    @app.post("/api/mobile/test")
+    def mobile_test():
+        if not settings.mobile_enabled():
+            raise ValueError("请先配对并开启手机提醒")
+        manager.mobile.test()
+        return mobile_configuration()
+
+    @app.get("/api/mobile/qr")
+    def mobile_qr():
+        pairing = settings.mobile_pairing()
+        if not pairing:
+            raise ValueError("请先生成手机配对码")
+        qr = qrcode.QRCode(error_correction=qrcode.constants.ERROR_CORRECT_M, border=2)
+        qr.add_data(pairing_code(pairing)); qr.make(fit=True)
+        image = qr.make_image(image_factory=qrcode.image.svg.SvgPathImage)
+        output = io.BytesIO(); image.save(output)
+        return Response(output.getvalue(), media_type="image/svg+xml")
 
     @app.post("/api/warmup")
     def warmup():

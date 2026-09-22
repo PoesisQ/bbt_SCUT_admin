@@ -231,6 +231,16 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.client.post("/api/sessions", json={**LESSON, "sub_id": "1"}).status_code, 400)
         self.assertEqual(self.client.post("/api/settings", json={"analysis_window": 0}).status_code, 422)
 
+    @unittest.skipUnless(__import__('os').name == 'nt', "Windows credential vault")
+    def test_mobile_pairing_is_local_secret_and_qr_is_generated(self):
+        with patch.object(self.settings, "key", return_value="test-key"):
+            configured = self.client.post("/api/mobile/setup").json()
+        self.assertTrue(configured["pairing_code"].startswith("SCUT1."))
+        self.assertTrue(configured["pairing_qr"].startswith("data:image/svg+xml;base64,"))
+        self.assertNotIn(configured["pairing_code"], self.client.get("/api/settings").text)
+        self.assertNotIn("auth_token", self.client.get("/api/settings").text)
+        self.assertEqual(configured["app_id"], "scut-classroom")
+
     def test_saving_school_subtitles_automatically_queues_notes_without_live_analysis(self):
         sid = self.create(mode="subtitle", analysis=False)
         with patch.object(self.settings, "key", return_value="test-key"):

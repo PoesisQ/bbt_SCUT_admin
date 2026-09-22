@@ -27,3 +27,4 @@ docs/
 .env.*
 !.env.example
 extension/local-connection.js
+mobile/android/.gradle/

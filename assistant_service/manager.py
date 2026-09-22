@@ -12,6 +12,7 @@ from .analysis import Analyzer, AnalysisPaused, analysis_packs, merge_events, ru
 from .settings import atomic_json
 from .asr import Transcriber, validate_wav, repetitive_segments
 from .media import Downloader, decode, split_wav
+from .mobile import MobileNotifier
 
 
 def append_segments(existing: list[dict], fresh: list[dict], key: str, offset: float, duration: float) -> list[dict]:
@@ -44,6 +45,7 @@ class Manager:
         self.settings, self.store = settings, store
         self.asr = transcriber or Transcriber(settings)
         self.analyzer = analyzer or Analyzer(settings)
+        self.mobile = MobileNotifier(settings, store)
         self.shutdown = threading.Event()
         self.threads = []
         self.last_finalize = 0
@@ -53,9 +55,11 @@ class Manager:
             thread = threading.Thread(target=self.worker, args=(lane,), daemon=True, name=f"scut-{lane}")
             thread.start()
             self.threads.append(thread)
+        self.mobile.start()
 
     def close(self):
         self.shutdown.set()
+        self.mobile.close()
 
     def worker(self, lane):
         while not self.shutdown.is_set():
@@ -159,7 +163,7 @@ class Manager:
             for index, pack in enumerate(packs):
                 if self.store.get(sid)["status"] == "cancelled" or self.shutdown.is_set():
                     return
-                if kind == "analyze" and self.store.get(sid).get("analysis", True) is False:
+                if kind == "analyze" and self.store.get(sid).get("analysis", True) is False and not self.settings.mobile_enabled():
                     self.store.update(sid, analysis_status="paused")
                     return
                 if self.settings.data["deepseek_model"] != model:
@@ -228,7 +232,7 @@ class Manager:
         session = self.store.get(sid)
         if any(j["kind"] == "repair" and j["state"] in {"pending", "running"} for j in self.store.jobs(sid)):
             return
-        if not session.get("analysis") or session["mode"] != "live" or not session["segments"]:
+        if (not session.get("analysis") and not self.settings.mobile_enabled()) or session["mode"] != "live" or not session["segments"]:
             return
         end = max(s["end"] for s in session["segments"])
         if end - session["last_analysis_end"] < self.settings.data["analysis_window"]:
