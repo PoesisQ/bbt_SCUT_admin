@@ -13,12 +13,12 @@ try {
     $scutHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2
 } catch { $scutHealth = $null }
 if ($scutHealth -and $scutHealth.app -ne 'scut-local-assistant') {
-    throw '端口 8765 已被其他程序占用，请检查后重试。'
+    throw 'Port 8765 is already used by another program.'
 }
 if (-not $scutHealth) {
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw '需要 uv。请先从 https://docs.astral.sh/uv/ 安装。' }
+    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw 'uv is required. Install it from https://docs.astral.sh/uv/.' }
     & uv sync --extra asr --python 3.12 --quiet
-    if ($LASTEXITCODE -ne 0) { throw '依赖安装失败。' }
+    if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
     $scutPython = Join-Path $scutRoot '.venv\Scripts\python.exe'
     $env:PYTHONIOENCODING = 'utf-8'
     if ($Foreground) { & $scutPython -m assistant_service; exit $LASTEXITCODE }
@@ -29,11 +29,11 @@ if (-not $scutHealth) {
         Start-Sleep -Milliseconds 500
         try { $scutHealth=Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 1; break } catch {}
     }
-    if (-not $scutHealth) { throw '服务未能启动，请查看 .local/server-error.log。' }
+    if (-not $scutHealth) { throw 'Service failed to start. See .local/server-error.log.' }
 }
-Write-Host 'SCUT 课堂助手已启动：http://127.0.0.1:8765'
-Write-Host 'Edge 加载扩展目录：' (Join-Path $scutRoot 'extension')
-Write-Host '首次连接口令：' (Join-Path $scutRoot '.local\connection.txt')
+Write-Host 'SCUT Classroom Assistant started: http://127.0.0.1:8765'
+Write-Host 'Edge extension directory:' (Join-Path $scutRoot 'extension')
+Write-Host 'First-time connection token:' (Join-Path $scutRoot '.local\connection.txt')
 if (-not $NoBrowser) {
     Start-Process 'http://127.0.0.1:8765/'
 }
