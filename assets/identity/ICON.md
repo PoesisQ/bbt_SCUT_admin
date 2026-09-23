@@ -1,19 +1,14 @@
-# Painted classroom icon
+# Quiet ribbon identity
 
-The user requested a richly colored, artistic icon with visible paint texture and delicate lines, without a glossy plastic appearance. The final artwork combines a watercolor book and sound wave on warm matte paper.
+The final mark is one continuous watercolor ribbon. Its two soft movements suggest attentive listening and the turning rhythm of a lesson without drawing a literal book, waveform or notification symbol. The generous negative space and controlled silhouette keep it calm at phone-launcher and browser-toolbar sizes.
 
 - Source: [painted-master.png](painted-master.png).
-- Production UI asset: [extension/brand.png](../../extension/brand.png).
+- Production UI asset: [extension/brand.png](../../extension/brand.png), with a transparent background.
 - Toolbar/notification PNG sizes: 16, 32, 48, 128 and 512 pixels in `extension/icons/`.
+- Android adaptive foreground and legacy square/round launcher sizes are generated under `mobile/android/app/src/main/res/`.
 - Created with the built-in image_gen tool. No external stock artwork was used.
 - `scripts/generate_icon.ps1` downsamples the approved master using native System.Drawing; it does not regenerate or repaint the design.
 
 ## Generation prompt
 
-Use case: logo-brand. Create one finished square app icon for a thoughtful classroom transcription and learning assistant. An artistic, richly multicolored hand-painted emblem: two airy curved brush gestures subtly suggest an open book and a flowing sound wave, elegantly interlaced with a few exquisitely fine, tapering charcoal-ink contour lines. Genuine matte watercolor and gouache pigment texture, translucent color blooms, dry-brush grain, softly irregular natural edges. Many sophisticated colors visible across the emblem: ultramarine, teal, emerald, vermilion, magenta, violet and warm yellow ochre, with luminous spaces between them; harmonious painterly color rather than a regular digital rainbow gradient. A clear memorable silhouette readable as a small browser toolbar icon, central symbol occupies about 80 percent of the square, generous clean negative space. Subtle warm off-white watercolor-paper rounded-square tile, completely transparent pixels outside its gently rounded corners; flat front-on icon artwork, no surrounding scene. The fine lines add delicacy but the underlying painted silhouette stays clear at 32 pixels. No lettering, no numbers, no watermark, no mockup, no metallic edges, no 3D extrusion, no plastic, no glass, no gloss, no bevel, no shadows. Premium contemporary art-publishing identity, quiet and expressive. Output a single icon, not a contact sheet. High-quality square PNG.
-
-## Final background edit
-
-The initial output simulated transparency with a visible checkerboard. A second built-in edit replaced that background; the shipped master uses opaque ivory paper, not simulated transparency.
-
-Edit this icon. Keep the multicolored watercolor open book and flowing sound-wave artwork, delicate ink lines, composition, scale, all pigment colors and matte paper texture unchanged. Change only the background: remove ALL gray checkerboard completely and extend the warm ivory watercolor paper seamlessly to fill the entire square canvas, right out to all four edges and all corners. A single flat paper square with the artwork on it, no rounded-square tile edge, no border, no drop shadow, no transparency simulation, no checker pattern anywhere. Do not add text or gloss. Deliver the finished square app icon artwork.
+Use case: logo-brand. Create a refined, restrained, gentle multicolor icon for a classroom transcription and reminder assistant. Design one memorable continuous ribbon-like mark that subtly suggests both an open page and a quiet audio waveform, without literally drawing a book or equalizer. Use elegant contemporary watercolor ink with precise fine-line structure and painterly pigment contained inside the controlled stroke. Transition harmoniously through cobalt blue, cyan, jade, warm coral, raspberry, violet and a restrained touch of amber. Keep a strong simple silhouette, broad safe margin and genuinely transparent background. No text, letters, border, container, shadow, starburst, sun, sparkles, dots, splashes, plastic 3D, glossy effects, thick blobs or busy detail.
