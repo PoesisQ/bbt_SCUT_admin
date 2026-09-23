@@ -261,6 +261,10 @@ class Manager:
                 sid = session["id"]
                 if session["status"] in {"cancelled", "complete", "failed"}:
                     continue
+                if (session["mode"] == "live" and session["status"] == "recording" and not session["stopped"]
+                        and time.time() - max(session.get("last_received_at", 0), session["created_at"]) > 600):
+                    self.store.update(sid, status="interrupted",
+                                      warning="超过 10 分钟未收到录音片段，已暂停显示；浏览器恢复上传后会继续记录")
                 jobs = self.store.jobs(sid)
                 repairs = [j for j in jobs if j["kind"] == "repair"]
                 if repairs:

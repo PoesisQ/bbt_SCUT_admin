@@ -169,7 +169,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.10.3"}
+        return {"app": "scut-local-assistant", "version": "0.10.4"}
 
     @app.get("/api/health")
     def diagnostics():

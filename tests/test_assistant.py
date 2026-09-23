@@ -188,6 +188,15 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.client.post(f"/api/sessions/{sid}/chunks?seq=0&start=0", content=wav_bytes()).status_code, 200)
         self.assertEqual(self.store.get(sid)["status"], "recording")
 
+    def test_live_capture_without_new_audio_is_not_shown_as_recording_forever(self):
+        sid = self.create()
+        self.store.update(sid, created_at=time.time() - 900, last_received_at=time.time() - 601)
+        self.manager.finalize()
+        self.assertEqual(self.store.get(sid)["status"], "interrupted")
+        self.assertFalse(self.store.get(sid)["stopped"])
+        self.assertEqual(self.client.post(f"/api/sessions/{sid}/chunks?seq=0&start=0", content=wav_bytes()).status_code, 200)
+        self.assertEqual(self.store.get(sid)["status"], "recording")
+
     def test_targeted_repair_only_reprocesses_suspect_chunks(self):
         sid = self.create()
         for seq in range(2):
