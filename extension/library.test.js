@@ -38,6 +38,18 @@ test("completed audio and incomplete notes have independent states",()=>{
   const done={...partial,analysis_status:"complete",summary:{partial:false,topics:[]}};
   assert.equal(L.action(done,true).label,"整理完整事项");assert.equal(L.action({...done,events_version:1},true).hidden,true);assert.equal(L.needsNotes(done),false);
 });
+test("an interrupted partial recording does not keep a fully noted lesson pending",()=>{
+  const ready={...lesson,id:"school",sub_id:"15",time_basis:"video",coverage_seconds:7200,analysis_status:"complete",summary:{partial:false,topics:[]}};
+  const interrupted={...lesson,id:"live",sub_id:"15",time_basis:"capture",coverage_seconds:1800,status:"interrupted",stopped:false,analysis_status:"complete",summary:null};
+  const combined=L.lessons([ready,interrupted])[0];
+  assert.equal(combined.id,"school");assert.equal(combined.lesson_pending,false);
+});
+
+test("a broader video result still returns a completed lesson to pending",()=>{
+  const ready={...lesson,id:"old",sub_id:"16",time_basis:"video",coverage_seconds:1000,analysis_status:"complete",summary:{partial:false,topics:[]}};
+  const broader={...lesson,id:"new",sub_id:"16",time_basis:"video",coverage_seconds:2000,status:"transcribing",stopped:true,analysis_status:"idle",summary:null};
+  assert.equal(L.lessons([ready,broader])[0].lesson_pending,true);
+});
 test("course overview groups actual topics and preserves event provenance",()=>{
   const s={...lesson,analysis_status:"complete",summary:{topics:[{title:"进程同步"},{title:"进程同步"}]},important_events:[{category:"assignment",message:"周五提交"}]};
   const grouped=L.groups([s,{...s,id:"b",course_id:"2",course_title:"第二门课"}]);

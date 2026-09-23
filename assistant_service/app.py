@@ -169,7 +169,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.10.0"}
+        return {"app": "scut-local-assistant", "version": "0.10.1"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -285,9 +285,14 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/api/sessions")
     def sessions(trash: bool = False):
+        def progress(s):
+            audio = [j for j in store.jobs(s["id"]) if j["kind"] in {"chunk", "repair"}]
+            return {"transcription_total": len(audio),
+                    "transcription_done": sum(j["state"] == "done" for j in audio),
+                    "transcription_failed": sum(j["state"] == "failed" for j in audio)}
         return [{k: v for k, v in s.items() if k not in {"segments", "events", "rule_candidates"}} |
                 {"segment_count": len(s["segments"]), "event_count": len(s["events"]),
-                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} for s in (store.list() if trash else store.records())
+                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} | progress(s) for s in (store.list() if trash else store.records())
                 if (bool(s.get("deleted_at")) and not s.get("deleted_with") if trash else not s.get("superseded_by"))]
 
     @app.get("/api/imports")

@@ -66,14 +66,19 @@ class Manager:
         self.mobile.close()
 
     def worker(self, lane):
+        recent_sessions = set()
         while not self.shutdown.is_set():
-            job = self.store.claim(lane)
+            job = self.store.claim(lane, exclude_sessions=recent_sessions)
+            if not job and recent_sessions:
+                recent_sessions.clear()
+                job = self.store.claim(lane)
             if not job:
                 if lane == "asr":
                     self.finalize(force=False)
                 self.shutdown.wait(0.4)
                 continue
             self.execute(job)
+            recent_sessions.add(job["session_id"])
             self.finalize()
 
     def execute(self, job):
@@ -268,6 +273,9 @@ class Manager:
                         self.store.update(sid, status="failed")
                     continue
                 if not session["stopped"] or any(j["state"] in {"pending", "running"} for j in audio):
+                    continue
+                if audio and not session["segments"]:
+                    self.store.update(sid, status="failed", error="音轨处理完成，但没有识别出可用语音；请检查音源是否有声音，或切换识别语言后重试")
                     continue
                 self.store.update(sid, status="complete", progress="处理完成")
                 if not self.settings.data["retain_audio"]:

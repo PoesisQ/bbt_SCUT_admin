@@ -160,14 +160,22 @@ class Store:
             self.db.commit()
         return jid
 
-    def claim(self, lane: str, max_priority: int | None = None):
+    def claim(self, lane: str, max_priority: int | None = None, exclude_sessions: set[str] | None = None):
         with self.lock:
             query = "SELECT * FROM jobs WHERE lane=? AND state='pending'"
             args = [lane]
             if max_priority is not None:
                 query += " AND priority<=?"
                 args.append(max_priority)
-            row = self.db.execute(query + " ORDER BY priority,created LIMIT 1", args).fetchone()
+            minimum = self.db.execute("SELECT MIN(priority) FROM (" + query + ")", args).fetchone()[0]
+            if minimum is None:
+                return None
+            query += " AND priority=?"
+            args.append(minimum)
+            if exclude_sessions:
+                query += " AND session_id NOT IN (" + ",".join("?" for _ in exclude_sessions) + ")"
+                args.extend(sorted(exclude_sessions))
+            row = self.db.execute(query + " ORDER BY created LIMIT 1", args).fetchone()
             if row:
                 self.db.execute("UPDATE jobs SET state='running' WHERE id=?", (row["id"],))
                 self.db.commit()

@@ -7,6 +7,7 @@ const labels={queued:"等待本地处理",recording:"正在录音",stopping:"正
 function node(tag,text,cls){const el=document.createElement(tag);if(text!==undefined)el.textContent=text;if(cls)el.className=cls;return el;}
 function clock(sec){const n=Math.max(0,Math.floor(sec||0));return [Math.floor(n/3600),Math.floor(n%3600/60),n%60].map(x=>String(x).padStart(2,"0")).join(":");}
 function versionLabel(s){return (s.source_label||"字幕")+" · "+(s.coverage?.length?s.coverage.map(([a,b])=>clock(a)+"–"+clock(b)).join(" / "):labels[s.status]||s.status)+(s.time_basis==="capture"?" · "+new Date(s.created_at*1000).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}):"");}
+function transcriptionProgress(s){return s.transcription_total?`已处理 ${s.transcription_done||0} / ${s.transcription_total} 段音频 · 当前 ${s.segment_count||0} 条字幕`:s.progress||"等待课程音频";}
 function status(text,error=false){$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
 function seek(sec){if(detail.time_basis==="capture")return node("span",clock(sec),"muted");const url=new URL(detail.page_url);url.searchParams.set("note_play",Math.floor(sec));const a=node("a",clock(sec)+" ↗");a.href=url.href;a.target="_blank";a.rel="noopener noreferrer";a.title="从此处打开学校回放";return a;}
 async function act(button,fn){button.disabled=true;try{await fn();}catch(e){status(e.message,true);}finally{button.disabled=false;if(detail)renderAction();}}
@@ -53,7 +54,7 @@ function renderLibrary(){
       const state=L.busy(s)?"整理中 "+(s.analysis_progress||""):s.analysis_status==="failed"?"笔记待续":L.hasNotes(s)?"笔记就绪":labels[s.status]||s.status;
       card.append(node("div",s.course_title,"note-meta"),node("div",s.title,"lesson-date"),node("h3",s.summary?.headline||titles.slice(0,2).join(" · ")||"本课字幕"));
       const unfinished=s.versions.find(v=>v.isImport);if(unfinished)card.append(node("p",unfinished.error?"另一次导入未完成："+unfinished.error:"正在读取本课的新字幕来源，请保持学校课时页面打开。","import-summary"));
-      card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?(s.notes_retry_at>Date.now()/1000&&s.notes_auto_attempts<3?"字幕已保存，稍后自动重试，已完成的笔记会复用。":"字幕已保存。自动重试未完成，请查看错误原因。"):s.segment_count?"字幕已保存，将自动整理本课知识点与重要事项。":s.progress||"等待课程字幕。")).slice(0,180)));
+      card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?(s.notes_retry_at>Date.now()/1000&&s.notes_auto_attempts<3?"字幕已保存，稍后自动重试，已完成的笔记会复用。":"字幕已保存。自动重试未完成，请查看错误原因。"):["queued","downloading","transcribing","processing"].includes(s.status)?transcriptionProgress(s):s.segment_count?"字幕已保存，将自动整理本课知识点与重要事项。":s.error||"尚未识别出可用字幕。")).slice(0,180)));
       const footer=node("footer");footer.append(node("span",state,"note-state"+(s.analysis_status==="failed"?" failed":L.hasNotes(s)?"":" pending")),node("span",s.record_count+" 份字幕 · 查看课时 →"));card.append(footer);card.onclick=()=>openLesson(s.id);target.append(card);
     }
   }
@@ -75,7 +76,8 @@ function renderDetail(){
   for(const s of detail.versions||[]){const b=node("button",versionLabel(s),"version-choice"+(s.id===detail.id?" active":""));b.setAttribute("aria-pressed",String(s.id===detail.id));b.onclick=()=>navigate(s.id);versions.append(b);}
   $("detail").hidden=false;$("browse").hidden=true;
   $("detail-course").textContent=detail.course_title+" · "+detail.title;$("detail-title").textContent=detail.summary?.headline||detail.title;
-  $("detail-meta").textContent=(labels[detail.status]||detail.status)+" · "+detail.segments.length+" 条字幕 · "+(detail.time_basis==="capture"?"时间从本次录音开始":"时间对应原视频");
+  const audio=detail.jobs.filter(j=>["chunk","repair"].includes(j.kind)),done=audio.filter(j=>j.state==="done").length;
+  $("detail-meta").textContent=(labels[detail.status]||detail.status)+(audio.some(j=>["pending","running"].includes(j.state))?` · 已处理 ${done}/${audio.length} 段音频 · 当前 ${detail.segments.length} 条字幕`:` · ${detail.segments.length} 条字幕`)+" · "+(detail.time_basis==="capture"?"时间从本次录音开始":"时间对应原视频");
   const warning=[detail.error,detail.analysis_status==="failed"?detail.warning:"",detail.status==="interrupted"?detail.warning:""].filter(Boolean);
   $("detail-warning").textContent=[...new Set(warning)].join("\n");$("detail-warning").hidden=!warning.length;
   const busy=L.busy(detail),partial=!!detail.summary?.partial;

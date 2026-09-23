@@ -276,6 +276,33 @@ class APITests(unittest.TestCase):
         self.store.enqueue(sid, "chunk", {}, priority=0, key="live")
         self.assertEqual(self.store.claim("asr")["id"], "live")
 
+    def test_equal_priority_replays_take_turns_between_courses(self):
+        first = self.create(sub_id="686881", page_url="https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686881")
+        second = self.create(sub_id="686880", page_url="https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686880")
+        third = self.create(sub_id="686879", page_url="https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686879")
+        self.store.enqueue(first, "chunk", {}, priority=20, key="first-1")
+        self.store.enqueue(first, "chunk", {}, priority=20, key="first-2")
+        self.store.enqueue(second, "chunk", {}, priority=20, key="second-1")
+        self.store.enqueue(third, "chunk", {}, priority=20, key="third-1")
+        seen = set()
+        one = self.store.claim("asr", exclude_sessions=seen); seen.add(one["session_id"])
+        two = self.store.claim("asr", exclude_sessions=seen); seen.add(two["session_id"])
+        three = self.store.claim("asr", exclude_sessions=seen)
+        self.assertEqual([one["id"], two["id"], three["id"]], ["first-1", "second-1", "third-1"])
+
+    def test_all_silent_audio_finishes_with_an_explicit_error(self):
+        sid = self.create()
+        self.client.post(f"/api/sessions/{sid}/chunks?seq=0&start=0", content=wav_bytes())
+        self.client.post(f"/api/sessions/{sid}/stop", json={"last_seq": 0})
+        job = self.store.claim("asr")
+        with patch.object(self.manager.asr, "transcribe", return_value=[]):
+            self.manager.run(job)
+        self.store.finish(job["id"])
+        self.manager.finalize()
+        session = self.store.get(sid)
+        self.assertEqual(session["status"], "failed")
+        self.assertIn("没有识别出可用语音", session["error"])
+
     def test_summary_yields_between_packs_to_realtime_analysis(self):
         archive = self.create(mode="subtitle")
         live = self.create()

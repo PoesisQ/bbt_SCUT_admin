@@ -13,7 +13,9 @@
       const comprehensive=s=>s.time_basis!=="capture"&&(s.coverage_seconds||0)>=span*.95;
       const ranked=[...versions].sort((a,b)=>Number(!b.isImport)-Number(!a.isImport)||Number(comprehensive(b))-Number(comprehensive(a))||Number(hasNotes(b))-Number(hasNotes(a))||(b.coverage_seconds||0)-(a.coverage_seconds||0)||b.created_at-a.created_at);
       const events=new Map();for(const s of versions)for(const e of s.important_events||[]){const key=[s.time_basis==="capture"?s.id:"video",e.start,e.category,e.message].join("|");if(!events.has(key))events.set(key,{...e,sid:s.id});}
-      const main=ranked[0];return {...main,important_events:[...events.values()],versions:ranked,lesson_pending:versions.some(pending),record_count:versions.filter(s=>!s.isImport).length};
+      const main=ranked[0],ready=versions.filter(hasNotes),readyCoverage=Math.max(0,...ready.filter(s=>s.time_basis!=="capture").map(s=>s.coverage_seconds||0));
+      const meaningfulPending=ready.length?versions.some(s=>pending(s)&&!s.isImport&&s.time_basis!=="capture"&&(s.coverage_seconds||0)>readyCoverage*1.05):versions.some(pending);
+      return {...main,important_events:[...events.values()],versions:ranked,lesson_pending:meaningfulPending,record_count:versions.filter(s=>!s.isImport).length};
     });
   }
   function importRows(imports){
