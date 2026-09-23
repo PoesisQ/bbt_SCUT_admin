@@ -20,8 +20,9 @@ globalThis.AssistantClient = {
       response = await fetch(this.base+path,{method,headers:{Authorization:`Bearer ${token}`,
         ...(body !== undefined ? {"Content-Type":raw?"audio/wav":"application/json"}:{})},
         body:body===undefined?undefined:raw?body:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});
-    } catch {
-      throw new Error("本地服务未启动。点击“一键启动本地服务”，等待连接恢复。");
+    } catch (error) {
+      if (error?.name === "TimeoutError") throw new Error("本地服务响应超时，可能仍在处理；请稍后刷新。");
+      throw new Error("暂时无法连接本地服务。请检查右上角连接状态，稍后刷新；仍未连接时再启动服务。");
     }
     if (!response.ok) {
       const result = await response.json().catch(()=>({}));

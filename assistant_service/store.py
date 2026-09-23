@@ -200,6 +200,35 @@ class Store:
             self.db.execute("UPDATE jobs SET state='pending',error=NULL WHERE session_id=? AND state='failed' AND lane!='analysis'", (sid,))
             self.db.commit()
 
+    def recover_missing_replay_audio(self, sid: str) -> bool:
+        """Rebuild missing replay chunks before letting ASR claim failed jobs."""
+        with self.lock:
+            rows = self.db.execute("SELECT payload,state FROM jobs WHERE session_id=? AND kind='chunk' AND state IN ('failed','waiting_media')", (sid,)).fetchall()
+            waiting = any(row["state"] == "waiting_media" for row in rows)
+            missing = any(not Path(json.loads(row["payload"])["path"]).is_file() for row in rows)
+            if not missing:
+                if waiting:
+                    self.release_waiting_media(sid)
+                return waiting
+            media = self.db.execute("SELECT id,state FROM jobs WHERE session_id=? AND kind='media' ORDER BY created DESC LIMIT 1", (sid,)).fetchone()
+            if not media:
+                raise ValueError("音频片段已丢失，且没有可重新下载的回放源；请从课程播放页重新导入")
+            self.db.execute("UPDATE jobs SET state='waiting_media',error=NULL WHERE session_id=? AND kind='chunk' AND state='failed'", (sid,))
+            if media["state"] not in {"pending", "running"}:
+                self.db.execute("UPDATE jobs SET state='pending',error=NULL WHERE id=?", (media["id"],))
+            self.db.commit()
+            return True
+
+    def release_waiting_media(self, sid: str):
+        with self.lock:
+            rows = self.db.execute("SELECT id,payload FROM jobs WHERE session_id=? AND state='waiting_media'", (sid,)).fetchall()
+            for row in rows:
+                exists = Path(json.loads(row["payload"])["path"]).is_file()
+                self.db.execute("UPDATE jobs SET state=?,error=? WHERE id=?",
+                                ("pending" if exists else "failed",
+                                 None if exists else "重新下载后仍缺少音频片段，请从课程播放页重新导入", row["id"]))
+            self.db.commit()
+
     def audio_inputs(self, sid: str):
         with self.lock:
             return [{"id": row["id"], **json.loads(row["payload"])} for row in self.db.execute(

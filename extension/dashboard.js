@@ -1,7 +1,7 @@
 const A=AssistantClient,L=CourseLibrary,$=id=>document.getElementById(id),isExtension=!!globalThis.chrome?.runtime?.id;
 let sessions=[],imports=[],trashed=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",eventCategory="all",focusedEventId=null,configured=false;
 const eventCache=new Map();
-let eventHydration=null;
+let eventHydration=null,noticeSource="";
 const params=new URLSearchParams(location.search);
 if(/^[a-f0-9]{32}$/.test(params.get("session")||""))selected=params.get("session");
 if(/^\d+$/.test(params.get("course")||""))course=params.get("course");
@@ -31,7 +31,8 @@ function completeSavedEvents(rows){
     if(changed){listStamp="";if(!selected)renderLibrary();}
   })();
 }
-function status(text,error=false){$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
+function status(text,error=false,source="action"){noticeSource=source==="action"&&/本地服务未启动|暂时无法连接本地服务|本地服务响应超时/.test(text)?"connection":source;$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
+function clearConnectionNotice(){if(noticeSource==="connection"){noticeSource="";$("status").textContent="";$("status").className="notice hidden";}}
 function seek(sec){if(detail.time_basis==="capture")return node("span",clock(sec),"muted");const url=new URL(detail.page_url);url.searchParams.set("note_play",Math.floor(sec));const a=node("a",clock(sec)+" ↗");a.href=url.href;a.target="_blank";a.rel="noopener noreferrer";a.title="从此处打开学校回放";return a;}
 async function act(button,fn){button.disabled=true;try{await fn();}catch(e){status(e.message,true);}finally{button.disabled=false;if(detail)renderAction();}}
 function matches(value){return !$("search").value.trim()||JSON.stringify(value).toLowerCase().includes($("search").value.trim().toLowerCase());}
@@ -177,13 +178,14 @@ async function refresh(){
     completeSavedEvents(result[0]);
     sessions=result[0];configured=result[1].deepseek_configured;imports=result[2];trashed=result[3];
     $("health").textContent="本地已连接";$("health").className="chip";
+    clearConnectionNotice();
     const live=sessions.filter(s=>s.mode==="live"&&!s.stopped&&s.status==="recording");
     $("current-class").hidden=!live.length;if(live.length)$("current-class-title").textContent=live.length===1?live[0].course_title+" · 正在后台录音":live.length+" 节课正在后台录音 · "+live.slice(0,3).map(s=>s.course_title).join("、");
     const stamp=JSON.stringify([sessions,imports,trashed]);
     if(stamp!==listStamp){listStamp=stamp;renderLibrary();}
     await refreshDetail();if(detail)renderAction();
-    if(isExtension){const batch=await A.send("BATCH_STATE");$("stop-batch").hidden=!batch||batch.cancelled||!batch.items.some(i=>i.status==="pending");if(batch)$("batch-status").textContent=(batch.cancelled?"已停止继续导入 · ":"")+batch.items.filter(i=>i.status==="queued").length+"/"+batch.items.length+" 节已导入\n"+batch.items.filter(i=>i.status==="failed").map(i=>i.sub_id+"："+i.error).join("\n");}
-  }catch(e){$("health").textContent="服务未连接";$("health").className="chip warn";status(e.message,true);}finally{loading=false;}
+    if(isExtension){try{const batch=await A.send("BATCH_STATE");$("stop-batch").hidden=!batch||batch.cancelled||!batch.items.some(i=>i.status==="pending");if(batch)$("batch-status").textContent=(batch.cancelled?"已停止继续导入 · ":"")+batch.items.filter(i=>i.status==="queued").length+"/"+batch.items.length+" 节已导入\n"+batch.items.filter(i=>i.status==="failed").map(i=>i.sub_id+"："+i.error).join("\n");}catch(e){status(e.message,true);}}
+  }catch(e){$("health").textContent="服务未连接";$("health").className="chip warn";status(e.message,true,"connection");}finally{loading=false;}
 }
 $("refresh").onclick=()=>{detailStamp=0;void refresh();};
 $("search").oninput=()=>{if(selected)navigate();else renderLibrary();};

@@ -169,7 +169,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.10.4"}
+        return {"app": "scut-local-assistant", "version": "0.10.5"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -471,8 +471,11 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
         session = store.get(sid)
         if session["status"] == "cancelled":
             raise ValueError("已取消的任务请重新创建")
-        store.retry(sid)
-        store.update(sid, status="recording" if not session["stopped"] and session["mode"] == "live" else "processing", error="", warning="")
+        rebuilding = session["mode"] == "replay" and store.recover_missing_replay_audio(sid)
+        if not rebuilding:
+            store.retry(sid)
+        store.update(sid, status=("downloading" if rebuilding else "recording" if not session["stopped"] and session["mode"] == "live" else "processing"),
+                     progress="重新获取缺失音轨" if rebuilding else session.get("progress", ""), error="", warning="")
         return store.get(sid)
 
     @app.post("/api/sessions/{sid}/analyze")

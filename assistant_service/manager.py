@@ -93,7 +93,11 @@ class Manager:
             self.store.finish(job["id"])
         except Exception as exc:
             # Do not include URLs, authorization headers or third-party bodies in errors.
-            error = str(exc) if isinstance(exc, ValueError) else f"{type(exc).__name__}：处理失败，请检查本地配置后重试"
+            if isinstance(exc, FileNotFoundError) and job["kind"] in {"chunk", "repair"}:
+                error = ("本地音频片段已丢失；点击“重试字幕处理”重新下载本节回放"
+                         if self.store.get(sid)["mode"] == "replay" else "录音片段已丢失，无法继续转写")
+            else:
+                error = str(exc) if isinstance(exc, ValueError) else f"{type(exc).__name__}：处理失败，请检查本地配置后重试"
             self.store.finish(job["id"], error)
             if self.store.get(sid)["status"] != "cancelled":
                 changes = {"warning" if lane == "analysis" else "error": error}
@@ -141,6 +145,7 @@ class Manager:
                     return
                 self.store.enqueue(sid, "chunk", {"path": str(path), "start": start, "duration": duration},
                                    key=f"{sid}-replay-{int(start)}", priority=20)
+            self.store.release_waiting_media(sid)
             self.store.update(sid, stopped=True, progress="音轨已就绪，按顺序转写")
         elif kind in {"analyze", "summary"}:
             session = self.store.get(sid)

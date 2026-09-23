@@ -285,6 +285,28 @@ class APITests(unittest.TestCase):
         self.client.post(f"/api/sessions/{sid}/retry")
         self.assertEqual(self.store.jobs(sid)[0]["state"], "pending")
 
+    def test_retry_rebuilds_missing_replay_audio_before_requeueing_asr(self):
+        sid = self.create(mode="replay", source_url="https://video.jw.scut.edu.cn/play/test.mp4")
+        media = next(item["id"] for item in self.store.jobs(sid) if item["kind"] == "media")
+        self.store.finish(media)
+        path = self.store.directory(sid) / "media" / "replay-000001.wav"
+        jid = self.store.enqueue(sid, "chunk", {"path": str(path), "start": 58, "duration": 60})
+        job = self.store.claim("asr")
+        with patch.object(self.manager.asr, "transcribe", side_effect=FileNotFoundError()):
+            self.manager.execute(job)
+        self.assertIn("音频片段已丢失", next(item["error"] for item in self.store.jobs(sid) if item["id"] == jid))
+        self.store.update(sid, stopped=True, status="failed", segments=[{"id": "saved", "start": 0, "end": 1, "text": "保留的字幕"}])
+        self.assertEqual(self.client.post(f"/api/sessions/{sid}/retry").status_code, 200)
+        states = {item["id"]: item["state"] for item in self.store.jobs(sid)}
+        self.assertEqual(states[media], "pending", str(states))
+        self.assertEqual(states[jid], "waiting_media")
+        self.assertEqual(self.store.get(sid)["status"], "downloading")
+        self.assertEqual(len(self.store.get(sid)["segments"]), 1)
+        path.parent.mkdir(exist_ok=True)
+        path.write_bytes(wav_bytes())
+        self.store.release_waiting_media(sid)
+        self.assertEqual({item["id"]: item["state"] for item in self.store.jobs(sid)}[jid], "pending")
+
     def test_cancel_prevents_queued_processing(self):
         sid = self.create()
         self.client.post(f"/api/sessions/{sid}/chunks?seq=0&start=0", content=wav_bytes())
