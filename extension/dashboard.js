@@ -1,5 +1,7 @@
 const A=AssistantClient,L=CourseLibrary,$=id=>document.getElementById(id),isExtension=!!globalThis.chrome?.runtime?.id;
-let sessions=[],imports=[],trashed=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",configured=false;
+let sessions=[],imports=[],trashed=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",eventCategory="all",focusedEventId=null,configured=false;
+const eventCache=new Map();
+let eventHydration=null;
 const params=new URLSearchParams(location.search);
 if(/^[a-f0-9]{32}$/.test(params.get("session")||""))selected=params.get("session");
 if(/^\d+$/.test(params.get("course")||""))course=params.get("course");
@@ -8,11 +10,33 @@ function node(tag,text,cls){const el=document.createElement(tag);if(text!==undef
 function clock(sec){const n=Math.max(0,Math.floor(sec||0));return [Math.floor(n/3600),Math.floor(n%3600/60),n%60].map(x=>String(x).padStart(2,"0")).join(":");}
 function versionLabel(s){return (s.source_label||"字幕")+" · "+(s.coverage?.length?s.coverage.map(([a,b])=>clock(a)+"–"+clock(b)).join(" / "):labels[s.status]||s.status)+(s.time_basis==="capture"?" · "+new Date(s.created_at*1000).toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"}):"");}
 function transcriptionProgress(s){return s.transcription_total?`已处理 ${s.transcription_done||0} / ${s.transcription_total} 段音频 · 当前 ${s.segment_count||0} 条字幕`:s.progress||"等待课程音频";}
+function eventPosition(e){const start=clock(e.start),end=Number(e.end)||0;return `课内 ${start}`+(end>e.start+1&&end-e.start<=120?`–${clock(end)}`:end-e.start>120?` · 补充至 ${clock(end)}`:"")+(e.time_basis==="capture"?" · 录音时间":"");}
+function eventDate(e){return e.lesson_at?new Date(e.lesson_at*1000).toLocaleDateString("zh-CN",{year:"numeric",month:"2-digit",day:"2-digit"}):"课时日期未记录";}
+function categoryLabel(id){return L.eventCategories.find(c=>c.id===id)?.label||"其他事项";}
+function renderEventCategories(target,events,onChange){
+  if(eventCategory!=="all"&&!events.some(e=>e.category===eventCategory))eventCategory="all";
+  target.replaceChildren();const choices=[{id:"all",label:"全部"},...L.eventCategories.filter(c=>events.some(e=>e.category===c.id))];
+  for(const c of choices){const count=c.id==="all"?events.length:events.filter(e=>e.category===c.id).length,b=node("button",`${c.label} ${count}`,"event-category"+(eventCategory===c.id?" active":""));b.setAttribute("aria-pressed",String(eventCategory===c.id));b.onclick=()=>{eventCategory=c.id;onChange();};target.append(b);}
+}
+function completeSavedEvents(rows){
+  const missing=[];
+  for(const s of rows){if(s.important_events_complete||!s.event_count)continue;const cached=eventCache.get(s.id);if(cached?.updated_at===s.updated_at)s.important_events=cached.events;else missing.push(s);}
+  if(eventHydration||!missing.length)return;
+  eventHydration=(async()=>{
+    for(let i=0;i<missing.length;i+=6){await Promise.all(missing.slice(i,i+6).map(async s=>{
+      try{const record=await A.api(`/api/sessions/${s.id}`),events=record.events.filter(e=>e.source==="deepseek");eventCache.set(s.id,{updated_at:s.updated_at,events});}catch{ /* The compact list remains usable if a detail cannot be read. */ }
+    }));}
+    eventHydration=null;let changed=false;
+    for(const s of sessions){const cached=eventCache.get(s.id);if(!s.important_events_complete&&cached?.updated_at===s.updated_at){s.important_events=cached.events;changed=true;}}
+    if(changed){listStamp="";if(!selected)renderLibrary();}
+  })();
+}
 function status(text,error=false){$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
 function seek(sec){if(detail.time_basis==="capture")return node("span",clock(sec),"muted");const url=new URL(detail.page_url);url.searchParams.set("note_play",Math.floor(sec));const a=node("a",clock(sec)+" ↗");a.href=url.href;a.target="_blank";a.rel="noopener noreferrer";a.title="从此处打开学校回放";return a;}
 async function act(button,fn){button.disabled=true;try{await fn();}catch(e){status(e.message,true);}finally{button.disabled=false;if(detail)renderAction();}}
 function matches(value){return !$("search").value.trim()||JSON.stringify(value).toLowerCase().includes($("search").value.trim().toLowerCase());}
 function navigate(id=null){
+  if(!id)focusedEventId=null;
   selected=id;detail=null;detailStamp=0;
   const url=new URL(location.href);
   if(id)url.searchParams.set("session",id);else url.searchParams.delete("session");
@@ -23,7 +47,7 @@ function navigate(id=null){
   window.scrollTo({top:0,behavior:"instant"});
 }
 function showView(view){for(const item of document.querySelectorAll("[data-view]")){const on=item.dataset.view===view;item.classList.toggle("active",on);item.setAttribute("aria-selected",String(on));$("view-"+item.dataset.view).hidden=!on;}}
-function openLesson(id,view="summary"){navigate(id);showView(view);}
+function openLesson(id,view="summary",eventId=null){focusedEventId=eventId;navigate(id);showView(view);}
 function courseButton(id,title,count,notes){const b=node("button",undefined,"course-choice"+(course===id?" active":""));b.append(node("strong",title),node("small",count+" 节课 · "+notes+" 份笔记"));b.setAttribute("aria-pressed",String(course===id));b.onclick=()=>{course=id;navigate();};return b;}
 function renderLibrary(){
   const records=L.lessons([...sessions,...L.importRows(imports)]);
@@ -36,14 +60,22 @@ function renderLibrary(){
   document.querySelector('[data-filter="pending"]').textContent="待整理"+(pending?" "+pending:"");
   const cloud=$("topic-cloud");cloud.replaceChildren();
   if(filter==="lessons"&&chosen){for(const t of chosen.topics.slice(0,12)){const b=node("button",t,"topic-chip");b.onclick=()=>{$("search").value=t;renderLibrary();};cloud.append(b);}}
+  const eventFilters=$("event-categories");eventFilters.hidden=filter!=="events";
   const target=$("lesson-grid");target.replaceChildren();
   if(filter==="trash"){
     for(const s of trashed.filter(s=>(!course||s.course_id===course)&&matches(s.title))){const card=node("article",undefined,"note-card import-card");card.append(node("div",s.course_title,"note-meta"),node("h3",s.title),node("p","已移出课程。恢复后会重新检查时间覆盖关系。"));const b=node("button","恢复这份字幕");b.onclick=()=>act(b,async()=>{await A.api(`/api/sessions/${s.id}/restore`,{method:"POST"});await refresh();});card.append(b);target.append(card);}
   }else if(filter==="events"){
-    const events=(chosen?[chosen]:groups).flatMap(g=>g.events.map(e=>({...e,course:g.title}))).filter(matches).sort((a,b)=>a.category.localeCompare(b.category)||a.start-b.start);
+    const timeline=L.eventTimeline(chosen?[chosen]:groups).filter(matches);
+    renderEventCategories(eventFilters,timeline,renderLibrary);
+    const events=timeline.filter(e=>eventCategory==="all"||e.category===eventCategory);
     for(const e of events){const card=node("article",undefined,"library-event");
-      card.append(node("small",e.label+" · "+e.course+" · "+e.lesson),node("p",e.message),node("small","原文："+e.evidence));
-      const b=node("button","查看本课事项 ↗");b.onclick=()=>openLesson(e.sid,"events");card.append(b);target.append(card);
+      card.dataset.category=e.category;
+      const head=node("div",undefined,"library-event-head");head.append(node("span",categoryLabel(e.category),"event-badge"),node("strong",eventDate(e),"event-date"));
+      card.append(head,node("small",e.course+" · "+e.lesson,"event-lesson"),node("h3",e.message),node("p",eventPosition(e),"event-time"));
+      const facts=node("div",undefined,"event-brief");for(const [key,label] of [["deadline","截止／时间"],["action","要做什么"],["submission","提交方式"],["requirements","具体要求"],["grading","评分"]]){if(e.details?.[key])facts.append(node("span",label+" · "+e.details[key]));}if(facts.children.length)card.append(facts);
+      const foot=node("div",undefined,"library-event-foot"),b=node("button","查看本课原文与上下文 ↗");b.onclick=()=>openLesson(e.sid,"events",e.id);foot.append(b);
+      if(e.time_basis!=="capture"&&e.page_url){const url=new URL(e.page_url);url.searchParams.set("note_play",Math.floor(e.start||0));const a=node("a","从此处播放回放 ↗");a.href=url.href;a.target="_blank";a.rel="noopener noreferrer";foot.append(a);}
+      card.append(foot);target.append(card);
     }
   }else{
     const rows=all.filter(s=>(filter!=="pending"||s.lesson_pending)&&matches([s.course_title,s.title,s.summary,s.important_events])).sort((a,b)=>b.start_at-a.start_at||b.created_at-a.created_at);
@@ -53,6 +85,7 @@ function renderLibrary(){
       const card=node("button",undefined,"note-card"),titles=L.titles(s);
       const state=L.busy(s)?"整理中 "+(s.analysis_progress||""):s.analysis_status==="failed"?"笔记待续":L.hasNotes(s)?"笔记就绪":labels[s.status]||s.status;
       card.append(node("div",s.course_title,"note-meta"),node("div",s.title,"lesson-date"),node("h3",s.summary?.headline||titles.slice(0,2).join(" · ")||"本课字幕"));
+      const assignments=(s.important_events||[]).filter(e=>e.category==="assignment");if(assignments.length)card.append(node("span",`${assignments.length} 项作业要求 · 查看原文`,"note-assignment-tag"));
       const unfinished=s.versions.find(v=>v.isImport);if(unfinished)card.append(node("p",unfinished.error?"另一次导入未完成："+unfinished.error:"正在读取本课的新字幕来源，请保持学校课时页面打开。","import-summary"));
       card.append(node("p",(s.summary?.abstract||s.summary?.overview||(s.analysis_status==="failed"?(s.notes_retry_at>Date.now()/1000&&s.notes_auto_attempts<3?"字幕已保存，稍后自动重试，已完成的笔记会复用。":"字幕已保存。自动重试未完成，请查看错误原因。"):["queued","downloading","transcribing","processing"].includes(s.status)?transcriptionProgress(s):s.segment_count?"字幕已保存，将自动整理本课知识点与重要事项。":s.error||"尚未识别出可用字幕。")).slice(0,180)));
       const footer=node("footer");footer.append(node("span",state,"note-state"+(s.analysis_status==="failed"?" failed":L.hasNotes(s)?"":" pending")),node("span",s.record_count+" 份字幕 · 查看课时 →"));card.append(footer);card.onclick=()=>openLesson(s.id);target.append(card);
@@ -86,6 +119,11 @@ function renderDetail(){
   $("progress-model").textContent=detail.analysis_model||"";
   $("progress-bar").max=detail.analysis_total||1;$("progress-bar").value=detail.analysis_done||0;
   const summary=$("view-summary");summary.replaceChildren();
+  const overviewEvents=detail.events.filter(e=>e.source==="deepseek"),assignments=overviewEvents.filter(e=>e.category==="assignment");
+  if(overviewEvents.length){const strip=node("section",undefined,"lesson-alerts"),heading=node("div",undefined,"lesson-alerts-heading"),open=node("button","查看全部事项 ↗");open.onclick=()=>showView("events");heading.append(node("strong",`本课重要事项 · ${overviewEvents.length} 项`),open);strip.append(heading);
+    const highlights=[...assignments,...overviewEvents.filter(e=>e.category!=="assignment"&&e.category!=="question").sort((a,b)=>(b.start||0)-(a.start||0))].slice(0,5);
+    for(const e of highlights){const line=node("div",undefined,"lesson-alert-line");line.append(node("span",categoryLabel(e.category),"event-badge"),node("span",e.message),seek(e.start));strip.append(line);}
+    if(assignments.length>highlights.length)strip.append(node("small","还有作业要求，点击“查看全部事项”阅读完整列表。"));summary.append(strip);}
   if(detail.summary){
     const topics=detail.summary.topics||[];
     if(detail.summary.abstract)summary.append(node("p",detail.summary.abstract,"lesson-abstract"));
@@ -107,9 +145,11 @@ function renderDetail(){
     summary.append(empty);
   }
   const events=$("view-events");events.replaceChildren();
-  const confirmed=detail.events.filter(e=>e.source==="deepseek");
+  const allConfirmed=detail.events.filter(e=>e.source==="deepseek").sort((a,b)=>(b.start||0)-(a.start||0));
   events.append(node("p",detail.events_version?"已结合全文整理。同一事项的补充说明合并显示，点击出处可核对原话。":"这是旧版或课堂中的即时分析。点击“整理完整事项”，结合全文重新核对作业与要求。","overview-intro"));
-  for(const e of confirmed){const card=node("article",undefined,"topic-note event-note"),top=node("header");top.append(node("strong",e.label),seek(e.start));card.append(top,node("h3",e.message));
+  const detailFilters=node("div",undefined,"event-categories");detailFilters.setAttribute("role","group");detailFilters.setAttribute("aria-label","按本课事项类型筛选");renderEventCategories(detailFilters,allConfirmed,renderDetail);events.append(detailFilters);
+  const confirmed=allConfirmed.filter(e=>eventCategory==="all"||e.category===eventCategory);
+  for(const e of confirmed){const card=node("article",undefined,"topic-note event-note"),top=node("header");card.dataset.category=e.category;top.append(node("strong",categoryLabel(e.category),"event-badge"),node("span",eventPosition(e),"event-time"),seek(e.start));card.append(top,node("h3",e.message));
     const facts=node("dl",undefined,"event-facts");
     for(const [key,label] of [["action","任务"],["deadline","时间"],["submission","提交方式"],["requirements","具体要求"],["grading","评分"]]){
       const value=e.details?.[key];if(value){facts.append(node("dt",label),node("dd",value));}
@@ -120,8 +160,9 @@ function renderDetail(){
     else source.append(node("small","深色为引用句，浅色为前后文。"));
     for(const i of [...included].sort((a,b)=>a-b)){const s=detail.segments[i],line=node("div",undefined,"event-context"+(ids.has(s.id)?" cited":""));line.append(seek(s.start),node("span",SessionView.clean(s)));source.append(line);}
     card.append(source);events.append(card);
+    if(focusedEventId&&focusedEventId===e.id){card.classList.add("focused");focusedEventId=null;requestAnimationFrame(()=>card.scrollIntoView({block:"center",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth"}));}
   }
-  if(!confirmed.length)events.append(node("p",detail.events_version?"通读本课字幕后，未提取到明确的作业、测验或其他课堂事项。":"尚未整理出明确事项。关键词初筛记录可在下方展开查看。","library-empty"));
+  if(!confirmed.length)events.append(node("p",allConfirmed.length?"本课没有这一类事项，请选择其他分类。":detail.events_version?"通读本课字幕后，未提取到明确的课堂事项。":"尚未整理出明确事项。关键词初筛记录可在下方展开查看。","library-empty"));
   const candidates=detail.rule_candidates||detail.events.filter(e=>e.source==="local_rule");
   if(candidates.length){const initial=node("details",undefined,"rule-candidates");initial.append(node("summary","关键词初筛 · "+candidates.length+" 处（不代表有任务）"));for(const e of candidates){const p=node("p");p.append(seek(e.start),document.createTextNode(" "+e.evidence));initial.append(p);}events.append(initial);}
   const transcript=$("view-transcript"),scroll=transcript.scrollTop;transcript.replaceChildren();
@@ -133,6 +174,7 @@ async function refresh(){
   if(loading)return;loading=true;
   try{
     const result=await Promise.all([A.api("/api/sessions"),A.api("/api/settings"),A.api("/api/imports"),A.api("/api/sessions?trash=true")]);
+    completeSavedEvents(result[0]);
     sessions=result[0];configured=result[1].deepseek_configured;imports=result[2];trashed=result[3];
     $("health").textContent="本地已连接";$("health").className="chip";
     const live=sessions.filter(s=>s.mode==="live"&&!s.stopped&&s.status==="recording");

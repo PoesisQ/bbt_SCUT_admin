@@ -5,6 +5,17 @@
   const hasNotes = s => !!s.summary && !s.summary.partial && s.analysis_status === "complete";
   const needsNotes = s => s.status !== "cancelled" && !!s.segment_count && !hasNotes(s);
   const pending = s => s.isImport ? ["pending","failed"].includes(s.status) : needsNotes(s)||["queued","downloading","transcribing","processing","failed"].includes(s.status);
+  const eventCategories=[
+    {id:"assignment",label:"作业"},{id:"quiz",label:"测验考试"},{id:"attendance",label:"点名签到"},
+    {id:"qr",label:"扫码互动"},{id:"question",label:"课堂提问"},{id:"schedule",label:"课程安排"},
+    {id:"grading",label:"评分"},{id:"requirements",label:"课程要求"},{id:"reminder",label:"特别提醒"}
+  ];
+  function lessonTime(s){
+    if(Number(s.start_at)>0)return Number(s.start_at);
+    const date=String(s.title||"").match(/\d{4}-\d{2}-\d{2}/);
+    const parsed=date?Date.parse(date[0]+"T00:00:00+08:00")/1000:0;
+    return Number.isFinite(parsed)&&parsed>0?parsed:Number(s.created_at)||0;
+  }
   function lessons(records){
     const map=new Map();
     for(const s of records){const key=s.course_id+":"+s.sub_id;if(!map.has(key))map.set(key,[]);map.get(key).push(s);}
@@ -12,7 +23,7 @@
       const span=Math.max(0,...versions.filter(s=>s.time_basis!=="capture").map(s=>s.coverage_seconds||0));
       const comprehensive=s=>s.time_basis!=="capture"&&(s.coverage_seconds||0)>=span*.95;
       const ranked=[...versions].sort((a,b)=>Number(!b.isImport)-Number(!a.isImport)||Number(comprehensive(b))-Number(comprehensive(a))||Number(hasNotes(b))-Number(hasNotes(a))||(b.coverage_seconds||0)-(a.coverage_seconds||0)||b.created_at-a.created_at);
-      const events=new Map();for(const s of versions)for(const e of s.important_events||[]){const key=[s.time_basis==="capture"?s.id:"video",e.start,e.category,e.message].join("|");if(!events.has(key))events.set(key,{...e,sid:s.id});}
+      const events=new Map();for(const s of versions)for(const e of s.important_events||[]){const key=[s.time_basis==="capture"?s.id:"video",e.start,e.category,e.message].join("|");if(!events.has(key))events.set(key,{...e,sid:s.id,lesson_at:lessonTime(s),time_basis:s.time_basis,page_url:s.page_url});}
       const main=ranked[0],ready=versions.filter(hasNotes),readyCoverage=Math.max(0,...ready.filter(s=>s.time_basis!=="capture").map(s=>s.coverage_seconds||0));
       const meaningfulPending=ready.length?versions.some(s=>pending(s)&&!s.isImport&&s.time_basis!=="capture"&&(s.coverage_seconds||0)>readyCoverage*1.05):versions.some(pending);
       return {...main,important_events:[...events.values()],versions:ranked,lesson_pending:meaningfulPending,record_count:versions.filter(s=>!s.isImport).length};
@@ -35,7 +46,12 @@
     }
     return [...result.values()].map(g=>({...g,topics:[...new Set(g.lessons.flatMap(s=>(s.versions||[s]).flatMap(v=>v.summary?.groups?.length?v.summary.groups.map(t=>t.title):titles(v))))],
       ready:g.lessons.filter(hasNotes).length,needs:g.lessons.filter(needsNotes).length,
-      events:g.lessons.flatMap(s=>(s.important_events||[]).map(e=>({...e,sid:e.sid||s.id,lesson:s.title})))}));
+      events:g.lessons.flatMap(s=>(s.important_events||[]).map(e=>({...e,sid:e.sid||s.id,lesson:s.title,lesson_at:e.lesson_at||lessonTime(s)})))}));
+  }
+  function eventTimeline(groups,category="all"){
+    return groups.flatMap(g=>g.events.map(e=>({...e,course:g.title})))
+      .filter(e=>category==="all"||e.category===category)
+      .sort((a,b)=>(b.lesson_at||0)-(a.lesson_at||0)||(b.start||0)-(a.start||0)||(b.end||0)-(a.end||0));
   }
   function action(s,configured){
     if(s.status === "cancelled")return {label:"任务已取消",disabled:true};
@@ -48,7 +64,7 @@
     if(s.analysis_status === "failed")return s.notes_retry_at>Date.now()/1000&&s.notes_auto_attempts<3?{label:"稍后自动重试",disabled:true}:{label:"继续生成笔记"};
     return {label:"等待自动生成笔记",disabled:true};
   }
-  const api={groups,lessons,titles,hasNotes,needsNotes,pending,importRows,busy,action};
+  const api={groups,lessons,titles,hasNotes,needsNotes,pending,importRows,busy,action,eventCategories,eventTimeline};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   root.CourseLibrary=api;
 })(globalThis);

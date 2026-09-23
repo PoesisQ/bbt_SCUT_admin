@@ -73,6 +73,7 @@ class AnalysisPaused(Exception):
 
 EVENT_TASK = """这是整节课的字幕（或超长课的连续大段），请通读全部前后文，整理完整的课堂事项。
 中英文同等处理，结果用中文。除作业外，也保留明确的课程政策、授课语言、评分规则、考试形式、后续课程安排及真实互动。
+按实际任务语义分类，不以是否出现“作业”、homework 等字眼为条件。老师要求阅读论文并写一页心得、观看视频后记录答案、课后完成推导或提交材料，都属于 assignment；在本节课或稍后明确要求完成的任务不要遗漏。
 事项不必要求学生提交东西：例如“we will be in English in our lecture”是授课语言要求；“in next lecture we will show ...”是下节课安排。
 “if I asked you to do homework”是举例，不是布置作业。教师实际要求同学回答的提问可归为 question；仅用于推导知识的设问不当作待办。
 topics 为空，overview 为空。不要逐句报关键词，不输出“疑似作业”这种无内容的占位通知。

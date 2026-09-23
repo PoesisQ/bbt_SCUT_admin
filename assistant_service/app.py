@@ -18,7 +18,7 @@ import qrcode
 import qrcode.image.svg
 
 from config import parse_course_url
-from .analysis import rule_events
+from .analysis import CATEGORIES, rule_events
 from .asr import validate_wav, repetitive_segments
 from .manager import Manager, append_segments
 from .media import validate_media_url
@@ -169,7 +169,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.10.2"}
+        return {"app": "scut-local-assistant", "version": "0.10.3"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -291,8 +291,8 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
                     "transcription_done": sum(j["state"] == "done" for j in audio),
                     "transcription_failed": sum(j["state"] == "failed" for j in audio)}
         return [{k: v for k, v in s.items() if k not in {"segments", "events", "rule_candidates"}} |
-                {"segment_count": len(s["segments"]), "event_count": len(s["events"]),
-                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e["category"] in {"assignment", "quiz", "schedule", "grading", "requirements", "reminder"}]} | progress(s) for s in (store.list() if trash else store.records())
+                {"segment_count": len(s["segments"]), "event_count": len(s["events"]), "important_events_complete": True,
+                 "important_events": [e for e in s["events"] if e.get("source") == "deepseek" and e.get("category") in CATEGORIES]} | progress(s) for s in (store.list() if trash else store.records())
                 if (bool(s.get("deleted_at")) and not s.get("deleted_with") if trash else not s.get("superseded_by"))]
 
     @app.get("/api/imports")

@@ -77,6 +77,19 @@ class APITests(unittest.TestCase):
         self.assertTrue(Path(setup["extension_path"]).joinpath("manifest.json").is_file())
         self.assertNotIn(self.settings.data["token"], json.dumps(setup))
 
+    def test_course_list_includes_every_confirmed_event_category(self):
+        sid = self.create()
+        categories = ("attendance", "qr", "question", "assignment", "quiz", "schedule", "grading", "requirements", "reminder")
+        events = [{"id": name, "category": name, "label": name, "source": "deepseek", "message": name,
+                   "evidence": name, "start": index * 30, "end": index * 30 + 4} for index, name in enumerate(categories)]
+        events.append({"id": "unconfirmed", "category": "assignment", "source": "local_rule", "message": "疑似作业", "evidence": "疑似作业", "start": 300})
+        self.store.update(sid, events=events)
+        row = next(item for item in self.client.get("/api/sessions").json() if item["id"] == sid)
+        self.assertTrue(row["important_events_complete"])
+        self.assertEqual({event["category"] for event in row["important_events"]}, set(categories))
+        self.assertEqual(len(row["important_events"]), len(categories))
+        self.assertEqual(row["important_events"][3]["start"], 90)
+
     def test_import_failures_are_durable_and_independent_of_the_next_batch(self):
         item = {k: v for k, v in LESSON.items() if k != "mode"}
         item.update(request_id="batch-one-686882", status="pending")

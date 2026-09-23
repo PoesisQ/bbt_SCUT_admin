@@ -56,3 +56,17 @@ test("course overview groups actual topics and preserves event provenance",()=>{
   assert.equal(grouped.length,2);assert.deepEqual(grouped[0].topics,["进程同步"]);
   assert.equal(grouped[0].events[0].sid,"a");assert.equal(grouped[0].ready,1);
 });
+
+test("confirmed course events sort by lesson date then by position, with semantic assignments visible",()=>{
+  const base={...lesson,course_id:"neuro",course_title:"神经科学",analysis_status:"complete",summary:{partial:false,topics:[]},time_basis:"video"};
+  const older={...base,id:"sep-02",sub_id:"02",title:"9月2日",start_at:100,created_at:300,important_events:[{id:"old",category:"assignment",message:"下周提交记录",start:500}]};
+  const recent={...base,id:"sep-20",sub_id:"20",title:"9月20日",start_at:200,created_at:201,important_events:[
+    {id:"paper",category:"assignment",message:"阅读论文，写两页启发",start:630,end:650},
+    {id:"quiz",category:"quiz",message:"课堂测试",start:1800,end:1810}]};
+  const latest={...base,id:"sep-22",sub_id:"22",title:"9月22日",start_at:220,created_at:221,important_events:[{id:"qr",category:"qr",message:"扫码答题",start:20,end:30}]};
+  const timeline=L.eventTimeline(L.groups(L.lessons([older,recent,latest])));
+  assert.deepEqual(timeline.map(e=>e.id),["qr","quiz","paper","old"]);
+  assert.equal(timeline.find(e=>e.id==="paper").lesson_at,200);
+  assert.deepEqual(L.eventTimeline(L.groups(L.lessons([older,recent,latest])),"assignment").map(e=>e.id),["paper","old"]);
+  assert.equal(L.eventCategories.some(c=>c.id==="qr"),true);
+});
