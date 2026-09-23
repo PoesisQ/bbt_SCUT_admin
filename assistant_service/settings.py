@@ -9,6 +9,7 @@ import threading
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
+MODEL_ALIASES = {"deepseek-v4-flash": "deepseek-flash"}
 
 
 def atomic_json(path: Path, value: object) -> None:
@@ -59,7 +60,7 @@ class Settings:
             "ffmpeg_path": str(engine / "ffmpeg.exe"),
             "model_path": str(pot / "Model" / "faster-whisper-large-v3-turbo"),
             "device": "cuda", "compute_type": "int8_float16", "language": "auto",
-            "hotwords": "", "deepseek_model": "deepseek-v4-flash",
+            "hotwords": "", "deepseek_model": "deepseek-flash",
             "deepseek_key_encrypted": "", "analysis_window": 35,
             "media_hosts": [], "retain_audio": False,
             "mobile_notifications_enabled": False,
@@ -67,6 +68,9 @@ class Settings:
         if self.path.exists():
             self.data.update(json.loads(self.path.read_text(encoding="utf-8")))
         else:
+            self.save()
+        if self.data.get("deepseek_model") in MODEL_ALIASES:
+            self.data["deepseek_model"] = MODEL_ALIASES[self.data["deepseek_model"]]
             self.save()
         self._migrate_key()
         (self.root / "connection.txt").write_text(
@@ -174,5 +178,5 @@ class Settings:
             allowed = set(self.data) - {"token", "deepseek_key_encrypted"}
             for k, v in patch.items():
                 if k in allowed:
-                    self.data[k] = v
+                    self.data[k] = MODEL_ALIASES.get(v, v) if k == "deepseek_model" else v
             self.save()

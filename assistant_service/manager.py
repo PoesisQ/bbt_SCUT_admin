@@ -51,10 +51,14 @@ class Manager:
         self.last_finalize = 0
 
     def start(self):
-        for lane in ("asr", "media", "analysis"):
-            thread = threading.Thread(target=self.worker, args=(lane,), daemon=True, name=f"scut-{lane}")
-            thread.start()
-            self.threads.append(thread)
+        # One resident GPU recognizer avoids duplicate VRAM use. Downloads and
+        # DeepSeek requests are independent and can make progress concurrently.
+        for lane, count in {"asr": 1, "media": 2, "analysis": 2}.items():
+            for index in range(count):
+                thread = threading.Thread(target=self.worker, args=(lane,), daemon=True,
+                                          name=f"scut-{lane}-{index + 1}")
+                thread.start()
+                self.threads.append(thread)
         self.mobile.start()
 
     def close(self):
@@ -122,7 +126,7 @@ class Manager:
             folder = self.store.directory(sid) / "media"
             folder.mkdir(exist_ok=True)
             cancelled = lambda: self.shutdown.is_set() or self.store.get(sid)["status"] == "cancelled"
-            self.store.update(sid, status="downloading")
+            self.store.update(sid, status="downloading", progress="正在下载回放媒体")
             source = Downloader(self.settings, cancelled, lambda t: self.store.update(sid, progress=t)).fetch(payload["url"], folder)
             self.store.update(sid, status="transcribing", progress="提取音轨")
             wav = folder / "audio.wav"

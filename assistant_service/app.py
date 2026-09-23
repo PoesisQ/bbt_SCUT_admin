@@ -169,7 +169,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.9.1"}
+        return {"app": "scut-local-assistant", "version": "0.10.0"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -217,7 +217,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
                     if folder.is_dir() and (folder / "model.bin").is_file():
                         installed[str(folder)] = folder.name
         return {"speech": [{"path": p, "name": n} for p, n in sorted(installed.items())],
-                "deepseek": ["deepseek-v4-flash", "deepseek-v4-pro"], "selected": settings.data["deepseek_model"]}
+                "deepseek": ["deepseek-flash", "deepseek-v4-pro"], "selected": settings.data["deepseek_model"]}
 
     @app.post("/api/settings")
     def update_configuration(patch: ConfigPatch):

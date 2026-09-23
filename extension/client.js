@@ -57,6 +57,8 @@ globalThis.AssistantClient = {
     if(saved.classroomWindow){
       try{const existing=await chrome.windows.get(saved.classroomWindow,{populate:true});
         if(existing.type==="popup"&&existing.tabs?.some(t=>t.id===saved.classroomTab)){
+          const current=existing.tabs.find(t=>t.id===saved.classroomTab);
+          if(current?.url&&current.url!==url)await chrome.tabs.update(saved.classroomTab,{url});
           await chrome.windows.update(existing.id,{focused:true,...(existing.state==="minimized"?{state:"normal"}:{})});return;
         }
       }catch{ /* The previous window was closed; create one below. */ }

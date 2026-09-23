@@ -22,3 +22,8 @@ class ConnectionTests(unittest.TestCase):
             result=check(settings,httpx.MockTransport(lambda request:response))
             self.assertFalse(result["ok"])
             self.assertNotIn("private upstream",str(result))
+
+    def test_legacy_flash_name_matches_the_current_model_listing(self):
+        settings=SimpleNamespace(key=lambda:"unit-test-key",data={"deepseek_model":"deepseek-v4-flash"})
+        transport=httpx.MockTransport(lambda request:httpx.Response(200,json={"data":[{"id":"deepseek-flash"}]}))
+        self.assertTrue(check(settings,transport)["ok"])

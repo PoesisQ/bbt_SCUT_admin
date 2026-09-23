@@ -36,13 +36,16 @@ class Transcriber:
         self.signature = None
         self.lock = threading.RLock()
         self.dll_handles = []
+        self.dll_paths = set()
         self.loaded_device = None
+        self.fallback_reason = ""
 
     def diagnostics(self):
         data = self.settings.data
         return {"engine": data["engine"], "model_exists": (Path(data["model_path"]) / "model.bin").is_file(),
                 "exe_exists": Path(data["engine_path"]).is_file(), "ffmpeg_exists": Path(data["ffmpeg_path"]).is_file(),
-                "loaded": self.model is not None, "device": self.loaded_device or data["device"]}
+                "loaded": self.model is not None, "device": self.loaded_device or data["device"],
+                "requested_device": data["device"], "fallback_reason": self.fallback_reason}
 
     def load(self):
         data = self.settings.data
@@ -54,20 +57,36 @@ class Transcriber:
             raise ValueError("未找到本地模型 model.bin，请检查设置中的模型目录；不会自动下载模型")
         if os.name == "nt":
             engine = Path(data["engine_path"]).parent
-            # Read-only reuse of the installed PotPlayer CUDA runtime. No global PATH changes.
+            # Read-only reuse of the installed PotPlayer CUDA runtime. Keep the
+            # loader handles alive, but never grow PATH on repeated load failures.
             for path in (engine / "_xxl_data" / "torch" / "lib",):
-                if path.is_dir():
+                normalized = str(path.resolve()).casefold()
+                if path.is_dir() and normalized not in self.dll_paths:
                     self.dll_handles.append(os.add_dll_directory(str(path)))
-                    os.environ["PATH"] = str(path) + os.pathsep + os.environ.get("PATH", "")
+                    self.dll_paths.add(normalized)
         try:
+            import ctranslate2
+            if not hasattr(ctranslate2, "StorageView"):
+                raise ImportError("ctranslate2 installation is incomplete")
             from faster_whisper import WhisperModel
         except ImportError as exc:
-            raise ValueError("请运行 uv sync --extra asr 安装常驻识别依赖，或选择 XXL 引擎") from exc
+            raise ValueError("常驻识别依赖不完整；请重新运行启动课堂助手.cmd，仍失败时重新安装识别依赖") from exc
         self.model = None
-        self.model = WhisperModel(str(model_path), device=data["device"], compute_type=data["compute_type"],
-                                  local_files_only=True, cpu_threads=6, num_workers=1)
+        device, compute_type = data["device"], data["compute_type"]
+        try:
+            self.model = WhisperModel(str(model_path), device=device, compute_type=compute_type,
+                                      local_files_only=True, cpu_threads=6, num_workers=1)
+            self.fallback_reason = ""
+        except RuntimeError as exc:
+            message = str(exc).lower()
+            if device != "cuda" or not any(term in message for term in ("no cuda-capable device", "cuda driver", "cuda failed")):
+                raise
+            device, compute_type = "cpu", "int8"
+            self.model = WhisperModel(str(model_path), device=device, compute_type=compute_type,
+                                      local_files_only=True, cpu_threads=6, num_workers=1)
+            self.fallback_reason = "CUDA 当前不可用，已自动使用 CPU；速度会较慢"
         self.signature = signature
-        self.loaded_device = data["device"]
+        self.loaded_device = device
 
     def transcribe(self, path: Path) -> list[dict]:
         with self.lock:

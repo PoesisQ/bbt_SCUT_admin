@@ -31,24 +31,31 @@ class Downloader:
     def download(self, url: str, dest: Path, *, limit=4 * 1024**3) -> str:
         if self.cancelled():
             raise ValueError("任务已取消")
-        with httpx.Client(timeout=45, follow_redirects=False, trust_env=False) as client:
-            for _ in range(6):
-                validate_media_url(url, self.settings.data["media_hosts"])
-                with client.stream("GET", url, headers={"User-Agent": "SCUT-Local-Assistant/0.3"}) as response:
-                    if response.is_redirect:
-                        url = urljoin(url, response.headers.get("location", ""))
-                        continue
-                    if response.status_code != 200:
-                        raise ValueError(f"视频源 HTTP {response.status_code}；请在课程页刷新源地址，或使用标签页实时字幕")
-                    with dest.open("wb") as out:
-                        for chunk in response.iter_bytes(256 * 1024):
-                            if self.cancelled():
-                                raise ValueError("任务已取消")
-                            self.bytes += len(chunk)
-                            if self.bytes > limit:
-                                raise ValueError("单课媒体超过 4GB 上限，请使用本地文件或较低清晰度源")
-                            out.write(chunk)
-                    return url
+        try:
+            with httpx.Client(timeout=45, follow_redirects=False, trust_env=False) as client:
+                for _ in range(6):
+                    validate_media_url(url, self.settings.data["media_hosts"])
+                    with client.stream("GET", url, headers={"User-Agent": "SCUT-Local-Assistant/0.3"}) as response:
+                        if response.is_redirect:
+                            url = urljoin(url, response.headers.get("location", ""))
+                            continue
+                        if response.status_code != 200:
+                            raise ValueError(f"视频源 HTTP {response.status_code}；请在课程页刷新源地址，或使用标签页实时字幕")
+                        with dest.open("wb") as out:
+                            for chunk in response.iter_bytes(256 * 1024):
+                                if self.cancelled():
+                                    raise ValueError("任务已取消")
+                                self.bytes += len(chunk)
+                                if self.bytes > limit:
+                                    raise ValueError("单课媒体超过 4GB 上限，请使用本地文件或较低清晰度源")
+                                out.write(chunk)
+                        return url
+        except httpx.TimeoutException as exc:
+            raise ValueError("下载回放超时；请保持学校网络可用后点击重试") from exc
+        except httpx.TransportError as exc:
+            raise ValueError("无法连接回放媒体源；请刷新学校课时页面后重试") from exc
+        except OSError as exc:
+            raise ValueError("无法写入本地回放缓存；请检查磁盘空间与项目目录权限") from exc
         raise ValueError("媒体源重定向过多")
 
     def fetch(self, url: str, folder: Path) -> Path:
@@ -117,8 +124,11 @@ def decode(settings, source: Path, target: Path, cancelled=lambda: False):
     command += ["-i", str(source), "-map", "0:a:0", "-vn", "-ac", "1", "-ar", "16000",
                 "-c:a", "pcm_s16le", "-t", "21601", str(target)]
     with (target.parent / "decode.log").open("wb") as log:
-        process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=log,
-                                   creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        try:
+            process = subprocess.Popen(command, stdout=subprocess.DEVNULL, stderr=log,
+                                       creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except OSError as exc:
+            raise ValueError("无法启动 FFmpeg；请重启本地服务并检查语音引擎路径") from exc
         try:
             while True:
                 try:

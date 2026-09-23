@@ -1,7 +1,7 @@
 const test=require("node:test"),assert=require("node:assert/strict"),vm=require("node:vm"),fs=require("node:fs"),path=require("node:path");
 
 function harness({paused=false,recorderError=false,subtitle={code:10002,msg:"未查询到语音数据",total:0,list:[]},infoError=false,journalError=false}={}) {
-  const local={token:"unit-test-token"},session={},requests=[],recorder=[],listeners=[],contexts=[],documents=[];
+  const local={token:"unit-test-token"},session={},requests=[],recorder=[],listeners=[],contexts=[],documents=[];let created=0;
   const id="a".repeat(32),sid="b".repeat(32),base=`chrome-extension://${id}/`;
   const event=()=>{const handlers=[];return {addListener(fn){handlers.push(fn);},async emit(...args){for(const fn of handlers)await fn(...args);}};};
   function storage(values){return {async get(key){if(typeof key==="string")return {[key]:values[key]};return {...key,...values};},async set(value){Object.assign(values,value);},async remove(key){delete values[key];},async setAccessLevel(){}};}
@@ -30,7 +30,7 @@ function harness({paused=false,recorderError=false,subtitle={code:10002,msg:"未
     async fetch(url,options){
       requests.push({url,...options});
       if(journalError&&url.endsWith("/api/imports"))throw Error("本地服务未连接");
-      return {ok:true,async json(){return url.endsWith("/api/sessions")?{id:sid,...JSON.parse(options.body)}:{ok:true};}};
+      return {ok:true,async json(){return url.endsWith("/api/sessions")?{id:created++?"c".repeat(32):sid,...JSON.parse(options.body)}:{ok:true};}};
     }
   };
   vm.createContext(context);
@@ -65,10 +65,22 @@ test("older browsers and inactive tabs retain a page entry without stealing focu
 });
 test("capture lifetime is in offscreen and persistent session storage, independent of the popup",async()=>{
   const h=harness();const result=await h.send({type:"START_CAPTURE",tabId:7,analysis:false});
-  assert.equal(result.ok,true,result.error);assert.equal(h.session.activeCapture.sid,h.sid);
+  assert.equal(result.ok,true,result.error);assert.equal(h.session.activeCaptures["7"].sid,h.sid);
   assert.equal(h.recorder.at(-1).type,"START");assert.equal(h.recorder.at(-1).streamId,"test-stream-id");
   assert.equal(h.requests.filter(r=>r.url.endsWith("/api/sessions")).length,1);
   const second=await h.send({type:"START_CAPTURE",tabId:7});assert.equal(second.ok,false);
+});
+
+test("different course tabs record independently and stop by tab",async()=>{
+  const h=harness();
+  const results=await Promise.all([h.send({type:"START_CAPTURE",tabId:7,analysis:true}),h.send({type:"START_CAPTURE",tabId:8,analysis:true})]);
+  assert.ok(results.every(result=>result.ok),results.map(result=>result.error).join("; "));
+  assert.equal(Object.keys(h.session.activeCaptures).length,2);
+  assert.notEqual(h.session.activeCaptures["7"].sid,h.session.activeCaptures["8"].sid);
+  const stopped=await h.send({type:"STOP_CAPTURE",tabId:8});
+  assert.equal(stopped.ok,true,stopped.error);
+  assert.equal(h.recorder.at(-1).tabId,8);
+  assert.equal(h.recorder.at(-1).sid,h.session.activeCaptures["8"].sid);
 });
 
 test('opening an idle control panel only reads status and never creates an audio background',async()=>{
@@ -79,10 +91,10 @@ test('opening an idle control panel only reads status and never creates an audio
 
 test('reopening panels and closing a classroom window preserve the original capture',async()=>{
   const h=harness();await h.send({type:'START_CAPTURE',tabId:7,analysis:true});
-  const original=h.session.activeCapture.sid;
+  const original=h.session.activeCaptures["7"].sid;
   await h.send({type:'RECORDER_STATE'});await h.send({type:'RECORDER_STATE'});
   await h.context.chrome.tabs.onRemoved.emit(88);
-  assert.equal(h.session.activeCapture.sid,original);
+  assert.equal(h.session.activeCaptures["7"].sid,original);
   assert.equal(h.recorder.filter(m=>m.type==='START').length,1);
   assert.equal(h.recorder.filter(m=>m.type==='STOP').length,0);
   assert.equal(h.documents.length,1);
@@ -93,7 +105,7 @@ test('reopening panels and closing a classroom window preserve the original capt
 test("paused playback cannot create a misleading recording and failed capture is cancelled",async()=>{
   const paused=harness({paused:true});assert.equal((await paused.send({type:"START_CAPTURE",tabId:7})).ok,false);assert.equal(paused.requests.length,0);
   const failed=harness({recorderError:true});assert.equal((await failed.send({type:"START_CAPTURE",tabId:7})).ok,false);
-  assert.ok(failed.requests.some(r=>r.url.endsWith("/cancel")));assert.equal(failed.session.activeCapture,undefined);
+  assert.ok(failed.requests.some(r=>r.url.endsWith("/cancel")));assert.equal(Object.keys(failed.session.activeCaptures).length,0);
 });
 
 test("capture permission after auto-open gives an actionable toolbar instruction without creating a session",async()=>{

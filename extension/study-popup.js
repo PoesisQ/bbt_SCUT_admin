@@ -39,7 +39,7 @@ if(!globalThis.chrome?.runtime?.id||new URLSearchParams(location.search).get("pr
 async function action(id,fn){acting.add(id);$(id).disabled=true;try{await fn();}catch(e){show(e.message,true);}finally{acting.delete(id);$(id).disabled=false;await recorder();}}
 async function recorder(){
   if(reading)return;reading=true;
-  try{if(Date.now()-lastConnection>5000){lastConnection=Date.now();await refreshConnection();}const state=await A.send("RECORDER_STATE");const running=!!state?.recording;
+  try{if(Date.now()-lastConnection>5000){lastConnection=Date.now();await refreshConnection();}const state=await A.send("RECORDER_STATE",{tabId:tab?.id});const running=!!state?.recording;
     paintScene(state||{});
     $("expand-room").textContent=running?"返回课堂实况 ↗":"查看上次课堂 ↗";
     $("expand-room").classList.toggle("primary",running);
@@ -83,7 +83,7 @@ $("analysis").onchange=async()=>{editing=true;const wanted=$("analysis").checked
   }catch(e){$("analysis").checked=!wanted;show(e.message,true);}finally{editing=false;await recorder();}
 };
 $("start").onclick=()=>action("start",async()=>{await A.send("START_CAPTURE",{tabId:tab.id,analysis:configured&&$("analysis").checked});show("已开始录音。点“返回正在录音的课堂”查看连续字幕。");});
-$("stop").onclick=()=>action("stop",async()=>{const s=await A.send("STOP_CAPTURE");show(s.pending?"正在补传 "+s.pending+" 段音频，请保持本地服务运行。":"录音已结束，剩余字幕和总结会继续保存。");});
+$("stop").onclick=()=>action("stop",async()=>{const s=await A.send("STOP_CAPTURE",{tabId:tab.id});show(s.pending?"正在补传 "+s.pending+" 段音频，请保持本地服务运行。":"录音已结束，剩余字幕和总结会继续保存。");});
 $("recover").onclick=()=>action("recover",async()=>{const s=await A.send("RECOVER_UPLOADS");show(s.error||"待上传音频："+s.pending+" 段",!!s.error);});
 $("auto-open").onchange=async e=>{await chrome.storage.local.set({autoOpenAssistant:e.target.checked});};
 $("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Error("未找到课时信息");await A.send("START_BATCH",{tabId:tab.id,subIds:[inspection.lesson.sub_id],lessons:[inspection.lesson],analysis:false,forceAsr:false});show("导入请求已保存，正在读取学校数据。");});

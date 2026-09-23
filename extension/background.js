@@ -4,7 +4,9 @@ const ready=chrome.storage.local.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"}
 chrome.runtime.onInstalled?.addListener(({reason})=>{
   if(reason==="install")void chrome.tabs.create({url:chrome.runtime.getURL("welcome.html")});
 });
-let creatingOffscreen, batchRunning=false, startingCapture=false, startingBatch=false;
+let creatingOffscreen, batchRunning=false, startingBatch=false;
+const startingCaptures=new Set();
+let captureMutation=Promise.resolve();
 
 async function offscreen() {
   if(!chrome.offscreen||!chrome.tabCapture?.getMediaStreamId) throw new Error("请升级到 Edge / Chrome 116 或以上版本");
@@ -22,11 +24,33 @@ async function tellRecorder(type,data={}) {
   return result.data;
 }
 
-async function activeCapture(){return (await chrome.storage.session.get("activeCapture")).activeCapture;}
-async function recorderState(){
+async function activeCaptures(){
+  const saved=await chrome.storage.session.get(["activeCaptures","activeCapture"]);
+  const captures=saved.activeCaptures||{};
+  if(saved.activeCapture?.tabId!=null){captures[String(saved.activeCapture.tabId)]=saved.activeCapture;await chrome.storage.session.set({activeCaptures:captures});await chrome.storage.session.remove("activeCapture");}
+  return captures;
+}
+async function captureFor({tabId,sid}={}){
+  const captures=await activeCaptures(),values=Object.values(captures);
+  return (tabId!=null?captures[String(tabId)]:sid?values.find(c=>c.sid===sid):values[0])||null;
+}
+async function mutateCaptures(change){
+  let result;const previous=captureMutation;let release;captureMutation=new Promise(resolve=>{release=resolve;});await previous;
+  try{const captures=await activeCaptures();change(captures);await chrome.storage.session.set({activeCaptures:captures});result=captures;}finally{release();}
+  return result;
+}
+async function saveCapture(capture){await mutateCaptures(captures=>{captures[String(capture.tabId)]=capture;});}
+async function removeCapture(capture){if(!capture)return;const captures=await mutateCaptures(value=>{delete value[String(capture.tabId)];});await updateBadge(captures);}
+async function updateBadge(captures){
+  captures=captures||await activeCaptures();
+  const count=Object.keys(captures).length;await chrome.action.setBadgeText({text:count?count===1?"REC":String(count):""});
+  if(count)await chrome.action.setBadgeBackgroundColor({color:"#dc5538"});
+}
+async function recorderState(selector={}){
+  const capture=await captureFor(selector);
   const contexts=await chrome.runtime.getContexts({contextTypes:["OFFSCREEN_DOCUMENT"],documentUrls:[chrome.runtime.getURL("offscreen.html")]});
-  if(!contexts.length)return {recording:false,pending:0,sid:null};
-  const result=await chrome.runtime.sendMessage({target:"offscreen",type:"STATE"});
+  if(!contexts.length)return {recording:false,pending:0,sid:capture?.sid||null,tabId:capture?.tabId||selector.tabId||null};
+  const result=await chrome.runtime.sendMessage({target:"offscreen",type:"STATE",sid:capture?.sid||selector.sid,tabId:capture?.tabId||selector.tabId});
   if(!result?.ok)throw new Error(result?.error||"暂时无法读取录音状态");
   return result.data;
 }
@@ -46,8 +70,8 @@ async function openAssistant(tab){
 }
 
 async function startCapture(message) {
-  if(startingCapture||await activeCapture()) throw new Error("已有课程正在录制或等待上传，请先结束当前录制");
-  startingCapture=true;
+  if(startingCaptures.has(message.tabId)||await captureFor({tabId:message.tabId})) throw new Error("这节课已经在录制或等待上传");
+  startingCaptures.add(message.tabId);
   let session;
   try {
     const context=await SchoolAPI.context(message.tabId);
@@ -69,17 +93,16 @@ async function startCapture(message) {
     session=await A.api("/api/sessions",{method:"POST",body:{...metadata,mode:"live",analysis:!!message.analysis}});
     await installOverlay(message.tabId);
     const capture={sid:session.id,tabId:message.tabId,url:context.url,time_basis:metadata.time_basis};
-    await chrome.storage.session.set({activeCapture:capture});
+    await saveCapture(capture);
     await tellRecorder("START",{streamId,session,capture,offset:metadata.time_basis==="video"?state.currentTime:0,
       connection:await A.connection()});
-    await chrome.action.setBadgeText({text:"REC"});
-    await chrome.action.setBadgeBackgroundColor({color:"#dc5538"});
+    await updateBadge();
     return session;
   } catch(error) {
     if(session) await A.api(`/api/sessions/${session.id}/cancel`,{method:"POST"}).catch(()=>{});
-    await chrome.storage.session.remove("activeCapture");
+    await removeCapture(await captureFor({tabId:message.tabId}));
     throw error;
-  } finally {startingCapture=false;}
+  } finally {startingCaptures.delete(message.tabId);}
 }
 
 async function processLesson(context, subId, analysis, forceAsr, requestId, onMetadata) {
@@ -140,7 +163,7 @@ async function runBatch() {
 }
 
 async function broadcastUpdate(message) {
-  const capture=await activeCapture();
+  const capture=await captureFor({sid:message.session?.id});
   const session=message.session;
   if(capture&&capture.sid===session.id) {
     await chrome.tabs.sendMessage(capture.tabId,{type:"SCUT_UPDATE",session,recorder:message.recorder}).catch(()=>{});
@@ -169,7 +192,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
     switch(message.type) {
       case "PAGE_ASSISTANT_READY": {
         const {autoOpenAssistant=true}=await chrome.storage.local.get("autoOpenAssistant");
-        const capture=await activeCapture();
+        const capture=await captureFor({tabId:sender.tab?.id});
         let connected=false,course="";
         try{const sessions=await A.api("/api/sessions");connected=true;const id=new URL(sender.tab.url).searchParams.get("course_id");course=sessions.find(s=>s.course_id===id)?.course_title||"";}catch{ /* Entry remains usable before pairing. */ }
         // Automatic entry stays inside the page. Never reopen a browser action window
@@ -195,13 +218,17 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         return result;
       }
       case "START_CAPTURE": return startCapture(message);
-      case "STOP_CAPTURE": return tellRecorder("STOP",{warning:message.warning||""});
-      case "RECORDER_STATE": return recorderState();
+      case "STOP_CAPTURE": {
+        const capture=await captureFor({tabId:message.tabId,sid:message.sid});
+        if(!capture)throw new Error("这节课当前没有录音");
+        return tellRecorder("STOP",{sid:capture.sid,tabId:capture.tabId,warning:message.warning||""});
+      }
+      case "RECORDER_STATE": return recorderState({tabId:message.tabId,sid:message.sid});
       case "RECOVER_UPLOADS": return tellRecorder("RECOVER",{connection:await A.connection()});
       case "RECORDER_UPDATE": await broadcastUpdate(message); return true;
       case "RECORDER_FINISHED":
-        {const capture=await activeCapture();if(capture&&message.session)await chrome.tabs.sendMessage(capture.tabId,{type:"SCUT_UPDATE",session:message.session,finished:true}).catch(()=>{});}
-        await chrome.storage.session.remove("activeCapture");await chrome.action.setBadgeText({text:""});return true;
+        {const capture=await captureFor({sid:message.session?.id});if(capture&&message.session)await chrome.tabs.sendMessage(capture.tabId,{type:"SCUT_UPDATE",session:message.session,finished:true}).catch(()=>{});await removeCapture(capture);}
+        return true;
       case "GET_CONNECTION": return A.connection();
       case "PLAYER_CLOCK": {
         await SchoolAPI.context(message.tabId);
@@ -210,7 +237,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         }}))[0]?.result;
       }
       case "OVERLAY_READY": {
-        const capture=await activeCapture();
+        const capture=await captureFor({tabId:sender.tab?.id});
         const {overlayPrefs:prefs={mode:"compact",fontSize:22}}=await chrome.storage.local.get("overlayPrefs");
         return {prefs,...(capture?.tabId===sender.tab?.id?{capture}:{})};
       }
@@ -220,9 +247,9 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
       }
       case "OPEN_CLASSROOM": await A.openClassroom(sender.tab?.id||message.tabId);return true;
       case "PLAYER_CHANGED": {
-        const capture=await activeCapture();
+        const capture=await captureFor({tabId:sender.tab?.id});
         if(capture?.tabId===sender.tab?.id&&capture.time_basis==="video")
-          await tellRecorder("STOP",{warning:"回放暂停、跳转或变速，录制已结束以保持字幕时间轴准确；继续播放后可重新开启"});
+          await tellRecorder("STOP",{sid:capture.sid,tabId:capture.tabId,warning:"回放暂停、跳转或变速，录制已结束以保持字幕时间轴准确；继续播放后可重新开启"});
         return true;
       }
       case "START_BATCH": {
@@ -264,13 +291,13 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==="batch") void runBatch();});
 chrome.runtime.onStartup.addListener(()=>void runBatch());
 chrome.tabs.onRemoved.addListener(async tabId=>{
-  const capture=await activeCapture();
-  if(capture?.tabId===tabId) await tellRecorder("STOP",{warning:"课程标签页已关闭；正在保存剩余音频"}).catch(()=>{});
+  const capture=await captureFor({tabId});
+  if(capture) await tellRecorder("STOP",{sid:capture.sid,tabId,warning:"课程标签页已关闭；正在保存剩余音频"}).catch(()=>{});
 });
 chrome.tabs.onUpdated.addListener(async(tabId,change)=>{
   if(!change.url) return;
-  const capture=await activeCapture();
-  if(capture?.tabId===tabId&&change.url!==capture.url) await tellRecorder("STOP",{warning:"课程页面已切换，已结束上一课时录制"}).catch(()=>{});
+  const capture=await captureFor({tabId});
+  if(capture&&change.url!==capture.url) await tellRecorder("STOP",{sid:capture.sid,tabId,warning:"课程页面已切换，已结束上一课时录制"}).catch(()=>{});
   await chrome.storage.session.remove(`media-${tabId}`);
 });
 // Observe only media URL metadata on the two authorized school hosts, never headers or cookies.

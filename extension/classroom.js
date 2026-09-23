@@ -3,7 +3,7 @@ const A=AssistantClient,V=SessionView,$=id=>document.getElementById(id),extensio
 let sid=null,session=null,following=true,polling=false,editing=false,stamp=0,eventStamp='',configured=false;
 const sourceTab=Number(new URLSearchParams(location.search).get('tab'))||null;
 function message(text,error=false){$('room-message').textContent=text;$('room-message').className='notice'+(error?' error':'');}
-function modelOption(value){if(![...$('room-model').options].some(o=>o.value===value))$('room-model').add(new Option(value,value));$('room-model').value=value;}
+function modelOption(value){for(const option of [...$('room-model').options])if(option.value==='deepseek-v4-flash')option.remove();if(![...$('room-model').options].some(o=>o.value===value))$('room-model').add(new Option(value==='deepseek-flash'?'V4.1 Flash':value,value));$('room-model').value=value;}
 async function preferences(){const cfg=await A.api('/api/settings');configured=cfg.deepseek_configured;modelOption(cfg.deepseek_model);$('room-language').textContent=cfg.language==='auto'?'自动识别 · 中英切换':({zh:'中文',en:'英语',yue:'粤语'}[cfg.language]||cfg.language);if(!editing&&!session){const pref=extension?await chrome.storage.local.get({analysisDefault:true}):{analysisDefault:true};$('room-analysis').checked=pref.analysisDefault;}$('room-analysis').disabled=!configured;$('room-analysis-status').textContent=configured?'仅控制即时提醒；保存后自动生成笔记':'先在智能分析设置中配置 API Key';}
 function render(value,state){
   session=value;const active=!!state?.recording||(!extension&&!value.stopped&&value.status==='recording');
@@ -24,7 +24,7 @@ function render(value,state){
   }
 }
 async function refresh(){if(polling)return;polling=true;try{
-  const state=extension?await A.send('RECORDER_STATE').catch(()=>null):null;
+  const state=extension?await A.send('RECORDER_STATE',{sid,tabId:sourceTab}).catch(()=>null):null;
   if(state?.sid&&state.sid!==sid){sid=state.sid;stamp=0;following=true;}
   if(!sid){const all=await A.api('/api/sessions');sid=(all.find(s=>s.mode==='live'&&!s.stopped)||all[0])?.id;}
   if(sid)render(await A.api('/api/sessions/'+sid),state);
@@ -34,10 +34,10 @@ $('follow').onclick=()=>{following=true;$('room-transcript').scrollTop=$('room-t
 document.querySelectorAll('[data-room-view]').forEach(button=>button.onclick=()=>{const view=button.dataset.roomView;document.querySelectorAll('[data-room-view]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-selected',String(b===button));});$('room-transcript').hidden=view!=='transcript';$('room-events').hidden=view!=='events';$('follow').hidden=view!=='transcript';if(view==='transcript'&&following)$('follow').click();});
 $('room-analysis').onchange=async()=>{editing=true;const wanted=$('room-analysis').checked;try{if(sid)await A.api('/api/sessions/'+sid+'/analysis-preference',{method:'POST',body:{enabled:wanted}});if(extension)await chrome.storage.local.set({analysisDefault:wanted});AssistantUI.toast(wanted?'实时提醒已开启':'实时提醒已关闭，课后笔记仍会自动生成');}catch(e){$('room-analysis').checked=!wanted;message(e.message,true);}finally{editing=false;await refresh();}};
 $('room-model').onchange=async()=>{const select=$('room-model');select.disabled=true;try{await A.api('/api/settings',{method:'POST',body:{deepseek_model:select.value}});AssistantUI.toast('模型已切换，下一次分析开始使用');}catch(e){message(e.message,true);await preferences();}finally{select.disabled=false;}};
-$('room-stop').onclick=async()=>{$('room-stop').disabled=true;try{await A.send('STOP_CAPTURE');message('录音已结束，剩余字幕与总结会继续保存。');await refresh();}catch(e){message(e.message,true);}};
+$('room-stop').onclick=async()=>{$('room-stop').disabled=true;try{await A.send('STOP_CAPTURE',{sid,tabId:sourceTab});message('录音已结束，剩余字幕与总结会继续保存。');await refresh();}catch(e){message(e.message,true);}};
 $('room-export').onclick=()=>A.download(sid).catch(e=>message(e.message,true));
 $('room-overlay').hidden=!extension;
-$('room-overlay').onclick=async()=>{try{const {activeCapture}=await chrome.storage.session.get('activeCapture');if(!activeCapture?.tabId)throw new Error('当前没有正在录音的课程。回放字幕请在课程笔记中附加。');await chrome.scripting.executeScript({target:{tabId:activeCapture.tabId},files:['session-view.js','overlay.js']});AssistantUI.toast('已同步课堂字幕浮层');}catch(e){message(e.message,true);}};
+$('room-overlay').onclick=async()=>{try{const state=await A.send('RECORDER_STATE',{sid,tabId:sourceTab});if(!state?.recording||!state.tabId)throw new Error('当前没有正在录音的课程。回放字幕请在课程笔记中附加。');await chrome.scripting.executeScript({target:{tabId:state.tabId},files:['session-view.js','overlay.js']});AssistantUI.toast('已同步课堂字幕浮层');}catch(e){message(e.message,true);}};
 $('minimize').onclick=async()=>{if(!extension){location.href='dashboard.html';return;}try{const win=await chrome.windows.getCurrent();if(win.type==='popup'){await chrome.windows.update(win.id,{state:'minimized'});}else if(sourceTab){const tab=await chrome.tabs.update(sourceTab,{active:true});await chrome.windows.update(tab.windowId,{focused:true});}else{message('从扩展面板点击「打开课堂实况」，即可使用独立窗口和最小化。');}}catch(e){message(e.message,true);}};
 if(!extension){$('minimize').title='返回课程笔记';$('minimize').setAttribute('aria-label','返回课程笔记');}
 window.addEventListener('focus',()=>void preferences().then(refresh).catch(e=>message(e.message,true)));

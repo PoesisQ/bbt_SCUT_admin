@@ -222,7 +222,7 @@ class Analyzer:
             "response_format": {"type": "json_object"}, "max_tokens": 6000,
             "temperature": 0.1, "stream": False}
         # New DeepSeek models offer non-thinking mode for latency-sensitive alerts.
-        if self.settings.data["deepseek_model"].startswith("deepseek-v4"):
+        if self.settings.data["deepseek_model"].startswith(("deepseek-v4", "deepseek-flash")):
             payload["thinking"] = {"type": "disabled"}
         for attempt in range(3):
             try:

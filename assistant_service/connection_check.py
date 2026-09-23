@@ -5,6 +5,8 @@ import time
 
 import httpx
 
+from .settings import MODEL_ALIASES
+
 
 def identity(settings):
     return hashlib.sha256((settings.key() + "\0" + settings.data["deepseek_model"]).encode()).hexdigest()
@@ -19,7 +21,8 @@ def check(settings, transport=None):
         if response.status_code != 200:
             message = {401: "Key 认证失败，请替换密钥", 403: "账户没有访问权限", 429: "请求频率受限，请稍后重试"}.get(response.status_code, f"DeepSeek HTTP {response.status_code}，请稍后重试")
             return {"ok": False, "message": message, "checked_at": time.time()}
-        available = settings.data["deepseek_model"] in {m["id"] for m in response.json()["data"]}
+        selected = MODEL_ALIASES.get(settings.data["deepseek_model"], settings.data["deepseek_model"])
+        available = selected in {m["id"] for m in response.json()["data"]}
         return {"ok": available, "message": "Key 认证通过，当前模型可用" if available else "Key 认证通过，但当前模型不在可用列表中", "checked_at": time.time()}
     except (httpx.HTTPError, ValueError, KeyError, TypeError):
         return {"ok": False, "message": "无法完成连接检测，请检查网络后重试", "checked_at": time.time()}

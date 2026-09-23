@@ -133,8 +133,8 @@ async function refresh(){
     const result=await Promise.all([A.api("/api/sessions"),A.api("/api/settings"),A.api("/api/imports"),A.api("/api/sessions?trash=true")]);
     sessions=result[0];configured=result[1].deepseek_configured;imports=result[2];trashed=result[3];
     $("health").textContent="本地已连接";$("health").className="chip";
-    const live=sessions.find(s=>s.mode==="live"&&!s.stopped&&s.status==="recording");
-    $("current-class").hidden=!live;if(live)$("current-class-title").textContent=live.course_title+" · 正在后台录音";
+    const live=sessions.filter(s=>s.mode==="live"&&!s.stopped&&s.status==="recording");
+    $("current-class").hidden=!live.length;if(live.length)$("current-class-title").textContent=live.length===1?live[0].course_title+" · 正在后台录音":live.length+" 节课正在后台录音 · "+live.slice(0,3).map(s=>s.course_title).join("、");
     const stamp=JSON.stringify([sessions,imports,trashed]);
     if(stamp!==listStamp){listStamp=stamp;renderLibrary();}
     await refreshDetail();if(detail)renderAction();
