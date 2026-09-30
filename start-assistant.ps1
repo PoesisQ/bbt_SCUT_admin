@@ -16,10 +16,12 @@ if ($scutHealth -and $scutHealth.app -ne 'scut-local-assistant') {
     throw 'Port 8765 is already used by another program.'
 }
 if (-not $scutHealth) {
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw 'uv is required. Install it from https://docs.astral.sh/uv/.' }
-    & uv sync --extra asr --python 3.12 --quiet
-    if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
     $scutPython = Join-Path $scutRoot '.venv\Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $scutPython -PathType Leaf)) {
+        if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw 'First-time setup requires uv. Install it from https://docs.astral.sh/uv/.' }
+        & uv sync --extra asr --python 3.12 --quiet
+        if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
+    }
     $env:PYTHONIOENCODING = 'utf-8'
     if ($Foreground) { & $scutPython -m assistant_service; exit $LASTEXITCODE }
     New-Item -ItemType Directory -Force -Path (Join-Path $scutRoot '.local') | Out-Null

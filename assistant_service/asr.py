@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 import wave
@@ -29,9 +31,14 @@ def repetitive_segments(segments: list[dict]) -> bool:
     return tiny_phrases >= 2 and repetitive_text(joined)
 
 
+class ASRProcessExit(Exception):
+    pass
+
+
 class Transcriber:
-    def __init__(self, settings):
+    def __init__(self, settings, *, isolated=True):
         self.settings = settings
+        self.isolated = isolated
         self.model = None
         self.signature = None
         self.lock = threading.RLock()
@@ -39,13 +46,127 @@ class Transcriber:
         self.dll_paths = set()
         self.loaded_device = None
         self.fallback_reason = ""
+        self.worker_process = None
+        self.worker_signature = None
+        self.worker_log = None
+        self.gpu_disabled = False
+        self.requested_signature = None
 
     def diagnostics(self):
         data = self.settings.data
         return {"engine": data["engine"], "model_exists": (Path(data["model_path"]) / "model.bin").is_file(),
                 "exe_exists": Path(data["engine_path"]).is_file(), "ffmpeg_exists": Path(data["ffmpeg_path"]).is_file(),
-                "loaded": self.model is not None, "device": self.loaded_device or data["device"],
+                "loaded": self.model is not None or self.worker_process is not None and self.worker_process.poll() is None,
+                "device": self.loaded_device or data["device"],
                 "requested_device": data["device"], "fallback_reason": self.fallback_reason}
+
+    def close(self):
+        process = self.worker_process
+        self.worker_process = None
+        self.worker_signature = None
+        if process is not None:
+            try:
+                if process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
+            for stream in (process.stdin, process.stdout):
+                if stream:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
+        if self.worker_log:
+            self.worker_log.close()
+            self.worker_log = None
+
+    def _request_worker(self, path: Path, data: dict, device: str):
+        config = {key: data[key] for key in ("engine", "engine_path", "model_path", "ffmpeg_path", "device", "compute_type", "language", "hotwords")}
+        config["device"] = device
+        if device == "cpu":
+            config["compute_type"] = "int8"
+        signature = json.dumps(config, sort_keys=True)
+        if self.worker_signature != signature or not self.worker_process or self.worker_process.poll() is not None:
+            self.close()
+            self.worker_log = (self.settings.root / "asr-worker.log").open("ab")
+            try:
+                self.worker_process = subprocess.Popen(
+                    [sys.executable, "-u", "-m", "assistant_service.asr_worker"],
+                    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.worker_log,
+                    cwd=Path(__file__).resolve().parents[1],
+                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+                self.worker_process.stdin.write((json.dumps({"config": config, "root": str(self.settings.root)}) + "\n").encode("utf-8"))
+                self.worker_process.stdin.flush()
+            except (OSError, BrokenPipeError) as exc:
+                self.close()
+                raise ASRProcessExit("无法启动独立识别进程") from exc
+            self.worker_signature = signature
+            self.loaded_device = device
+        process = self.worker_process
+        try:
+            process.stdin.write((json.dumps({"path": str(path)}) + "\n").encode("utf-8"))
+            process.stdin.flush()
+        except (OSError, BrokenPipeError) as exc:
+            self.close()
+            raise ASRProcessExit("识别进程已退出") from exc
+        answer = queue.Queue(maxsize=1)
+        def read_response():
+            try:
+                while line := process.stdout.readline():
+                    if line.startswith(b"@SCUT-ASR@"):
+                        answer.put(line[len(b"@SCUT-ASR@"):])
+                        return
+            except OSError:
+                pass
+            answer.put(b"")
+        threading.Thread(target=read_response, daemon=True, name="scut-asr-response").start()
+        try:
+            line = answer.get(timeout=900)
+        except queue.Empty as exc:
+            self.close()
+            raise ASRProcessExit("识别进程超时") from exc
+        if not line:
+            self.close()
+            raise ASRProcessExit("识别进程异常退出")
+        try:
+            response = json.loads(line)
+        except (ValueError, TypeError) as exc:
+            self.close()
+            raise ASRProcessExit("识别进程返回无效数据") from exc
+        if not isinstance(response, dict):
+            self.close()
+            raise ASRProcessExit("识别进程返回无效数据")
+        if not response.get("ok"):
+            if device == "cuda" and response.get("error_type") in {"RuntimeError", "OSError"}:
+                self.close()
+                raise ASRProcessExit("CUDA 识别进程无法继续")
+            raise ValueError(response.get("error") or "本地语音识别失败；请检查模型设置")
+        if not isinstance(response.get("segments"), list):
+            self.close()
+            raise ASRProcessExit("识别进程返回无效字幕")
+        return response["segments"]
+
+    def _isolated_transcribe(self, path: Path, data: dict):
+        requested = tuple(data[key] for key in ("model_path", "device", "compute_type"))
+        if self.requested_signature != requested:
+            self.requested_signature = requested
+            self.gpu_disabled = False
+            self.fallback_reason = ""
+        device = "cpu" if self.gpu_disabled else data["device"]
+        try:
+            return self._request_worker(path, data, device)
+        except ASRProcessExit as exc:
+            if device != "cuda":
+                raise ValueError("独立语音识别进程退出；音频已保留，可检查模型后重试") from exc
+            self.gpu_disabled = True
+            self.fallback_reason = "CUDA 识别进程异常退出，已自动切换到 CPU；本地服务保持连接"
+            try:
+                return self._request_worker(path, data, "cpu")
+            except ASRProcessExit as fallback:
+                raise ValueError("独立语音识别进程退出；音频已保留，可检查模型后重试") from fallback
 
     def load(self):
         data = self.settings.data
@@ -93,6 +214,8 @@ class Transcriber:
             data = self.settings.data.copy()
             if data["engine"] == "xxl":
                 return self.xxl(path, data)
+            if self.isolated and self.model is None:
+                return self._isolated_transcribe(path, data)
             self.load()
             options = dict(
                 language=None if data["language"] == "auto" else data["language"],

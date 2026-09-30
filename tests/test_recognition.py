@@ -3,14 +3,39 @@ from types import SimpleNamespace
 import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
-from assistant_service.asr import Transcriber, repetitive_text, repetitive_segments
+from assistant_service.asr import ASRProcessExit, Transcriber, repetitive_text, repetitive_segments
 from assistant_service.settings import Settings
 from assistant_service.manager import append_segments
 from assistant_service.analysis import rule_events
 
 
 class RecognitionTests(unittest.TestCase):
+    def test_cuda_worker_crash_falls_back_without_exiting_service(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Settings(Path(folder))
+            settings.data.update(engine="resident", device="cuda", compute_type="int8_float16")
+            engine = Transcriber(settings)
+            with patch.object(engine, "_request_worker", side_effect=[ASRProcessExit("CUDA crash"), [{"start": 0, "end": 1, "text": "保留的字幕"}]]) as call:
+                result = engine.transcribe(Path(folder) / "audio.wav")
+            self.assertEqual(result[0]["text"], "保留的字幕")
+            self.assertEqual([args.args[2] for args in call.call_args_list], ["cuda", "cpu"])
+            self.assertTrue(engine.gpu_disabled)
+            self.assertIn("CPU", engine.fallback_reason)
+
+    def test_isolated_worker_returns_model_error_without_crashing_parent(self):
+        with tempfile.TemporaryDirectory() as folder:
+            settings = Settings(Path(folder))
+            settings.data.update(engine="resident", device="cpu", compute_type="int8", model_path=str(Path(folder) / "absent-model"))
+            engine = Transcriber(settings)
+            try:
+                with self.assertRaisesRegex(ValueError, "model.bin"):
+                    engine.transcribe(Path(folder) / "audio.wav")
+                self.assertTrue(engine.worker_process and engine.worker_process.poll() is None)
+            finally:
+                engine.close()
+
     def test_extreme_loops_are_distinct_from_natural_repetition(self):
         for text in ['多' * 100, '网络' * 50, '有些认识，' * 12, '组织\ufffd']:
             self.assertTrue(repetitive_text(text))

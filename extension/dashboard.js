@@ -44,7 +44,17 @@ function navigate(id=null){
   if(course)url.searchParams.set("course",course);else url.searchParams.delete("course");
   history.replaceState(null,"",url);
   $("browse").hidden=!!id;$("detail").hidden=!id;
-  if(id){$("detail-title").textContent="正在读取笔记…";void refreshDetail();}else renderLibrary();
+  if(id){
+    const lesson=sessions.find(s=>s.id===id),name=lesson?.title||"这节课";
+    $("detail-course").textContent=lesson?lesson.course_title+" · "+name:"";
+    $("detail-title").textContent="正在读取「"+name+"」…";
+    $("detail-meta").textContent="连接恢复后会自动显示这节课的笔记";
+    $("detail-warning").textContent="";$("detail-warning").hidden=true;
+    $("analysis-progress").hidden=true;$("lesson-versions").replaceChildren();
+    $("view-summary").replaceChildren();$("view-events").replaceChildren();$("view-transcript").replaceChildren();
+    document.querySelector(".version-panel").hidden=true;document.querySelector(".detail-actions").hidden=true;document.querySelector(".tabs").hidden=true;
+    void refreshDetail();
+  }else renderLibrary();
   window.scrollTo({top:0,behavior:"instant"});
 }
 function showView(view){for(const item of document.querySelectorAll("[data-view]")){const on=item.dataset.view===view;item.classList.toggle("active",on);item.setAttribute("aria-selected",String(on));$("view-"+item.dataset.view).hidden=!on;}}
@@ -106,6 +116,7 @@ function renderAction(){
 }
 function renderDetail(){
   if(!detail)return;
+  document.querySelector(".version-panel").hidden=false;document.querySelector(".detail-actions").hidden=false;document.querySelector(".tabs").hidden=false;
   const versions=$("lesson-versions");versions.replaceChildren();
   for(const s of detail.versions||[]){const b=node("button",versionLabel(s),"version-choice"+(s.id===detail.id?" active":""));b.setAttribute("aria-pressed",String(s.id===detail.id));b.onclick=()=>navigate(s.id);versions.append(b);}
   $("detail").hidden=false;$("browse").hidden=true;
@@ -170,7 +181,7 @@ function renderDetail(){
   for(const s of detail.segments){const el=node("div",undefined,"segment");el.append(seek(s.start),node("span",SessionView.clean(s)));transcript.append(el);}transcript.scrollTop=scroll;
   renderAction();
 }
-async function refreshDetail(){if(!selected)return;const id=selected;try{const value=await A.api("/api/sessions/"+id);if(id!==selected)return;if(value.deleted_at){navigate();status("这份字幕已移到回收站，可恢复后查看。");return;}if(value.superseded_by){navigate(value.superseded_by);return;}const stamp=JSON.stringify([value.updated_at,value.versions]);if(stamp!==detailStamp){detail=value;detailStamp=stamp;renderDetail();}}catch(e){status(e.message,true);}}
+async function refreshDetail(){if(!selected)return;const id=selected;try{const value=await A.api("/api/sessions/"+id);if(id!==selected)return;if(value.deleted_at){navigate();status("这份字幕已移到回收站，可恢复后查看。");return;}if(value.superseded_by){navigate(value.superseded_by);return;}const stamp=JSON.stringify([value.updated_at,value.versions]);if(stamp!==detailStamp){detail=value;detailStamp=stamp;renderDetail();}}catch(e){if(id!==selected)return;if(!detail)$("detail-meta").textContent="这节课暂时无法读取，连接恢复后会自动重试。";status(e.message,true);}}
 async function refresh(){
   if(loading)return;loading=true;
   try{

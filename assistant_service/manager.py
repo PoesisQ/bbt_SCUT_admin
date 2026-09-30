@@ -64,6 +64,8 @@ class Manager:
     def close(self):
         self.shutdown.set()
         self.mobile.close()
+        if hasattr(self.asr, "close"):
+            self.asr.close()
 
     def worker(self, lane):
         recent_sessions = set()

@@ -376,14 +376,14 @@ class APITests(unittest.TestCase):
         self.assertEqual(self.store.jobs(sid)[0]["kind"], "summary")
         self.assertEqual(self.store.get(sid)["warning"], "")
 
-    def test_restart_marks_unfinished_work_and_preserves_received_audio(self):
+    def test_restart_resumes_asr_chunk_and_preserves_received_audio(self):
         sid = self.create()
         self.client.post(f"/api/sessions/{sid}/chunks?seq=0&start=0", content=wav_bytes())
         self.store.claim("asr")
         self.store.db.close()
         self.store = Store(self.settings.root)
         self.assertEqual(self.store.get(sid)["status"], "interrupted")
-        self.assertEqual(self.store.jobs(sid)[0]["state"], "failed")
+        self.assertEqual(self.store.jobs(sid)[0]["state"], "pending")
 
 
 class AnalysisTests(unittest.TestCase):

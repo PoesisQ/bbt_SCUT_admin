@@ -28,7 +28,9 @@ class Store:
                 priority INTEGER NOT NULL, created REAL NOT NULL, error TEXT);
             CREATE INDEX IF NOT EXISTS job_queue ON jobs(lane,state,priority,created);
         """)
-        # Interrupted work stays reviewable and can be explicitly retried.
+        # ASR chunks are idempotent and keep their input files; resume them after a crash.
+        # A partially downloaded media job requires an explicit retry instead.
+        self.db.execute("UPDATE jobs SET state='pending',error=NULL WHERE state='running' AND lane='asr'")
         self.db.execute("UPDATE jobs SET state='failed',error='本地服务重启中断了任务，请重试' WHERE state='running'")
         self.db.commit()
         for s in self.list():
