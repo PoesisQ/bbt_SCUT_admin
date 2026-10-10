@@ -17,7 +17,8 @@ function select(message={}){
 }
 async function chunksFor(sid){return (await db("chunks","readonly",s=>s.getAll())).filter(chunk=>!sid||chunk.sid===sid);}
 async function state(message={}){
-  const recorder=select(message),pending=await chunksFor(recorder?.capture.sid||message.sid);
+  const recorder=select(message),sid=recorder?.capture.sid||message.sid;
+  const pending=sid?await chunksFor(sid):message.tabId!=null?[]:await chunksFor();
   return {recording:!!recorder?.media,stopping:!!recorder?.stopping,sid:recorder?.capture.sid||message.sid||null,
     tabId:recorder?.capture.tabId||message.tabId||null,pending:pending.length,error:recorder?.lastError||"",
     recordings:[...recorders.values()].map(r=>({sid:r.capture.sid,tabId:r.capture.tabId,recording:!!r.media,stopping:r.stopping}))};

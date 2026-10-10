@@ -1,15 +1,17 @@
 (() => {
 const A=AssistantClient,V=SessionView,$=id=>document.getElementById(id);
 let tab,inspection,connected=false,reading=false,editing=false,configured=false,activeSession=null,importSession=null,preferences={analysisDefault:true},acting=new Set();
-let lastConnection=0;
+let lastConnection=0,lastInspection=0,inspecting=false,inspectionError="",recorderStatus={unknown:true},connectionFailures=0,launching=false,autoLaunchTried=false,importPending=false;
 function keyState(cfg){configured=cfg.deepseek_configured;$("key-indicator").textContent=configured?"已识别本机 Key":cfg.deepseek_key_status==="unreadable"?"Key 无法解密":"尚未配置 Key";$("key-indicator").parentElement.dataset.ready=String(configured);$("test-key").disabled=!configured;$("key-check-result").hidden=!cfg.deepseek_check;if(cfg.deepseek_check){$("key-check-result").hidden=false;$("key-check-result").textContent=cfg.deepseek_check.message+" · "+new Date(cfg.deepseek_check.checked_at*1000).toLocaleTimeString();}}
 async function refreshConnection(){
-  try{const cfg=await A.api("/api/settings",{timeout:2500});connected=true;keyState(cfg);$("connection").textContent="本地已连接";$("connection").className="chip";$("launch-panel").hidden=true;}
-  catch(e){connected=false;configured=false;const pairing=e.message.includes("口令");$("connection").textContent=pairing?"需要配对":"待连接";$("connection").className="chip warn";$("key-indicator").textContent=pairing?"请在设置中完成扩展配对":"服务连接后读取 Key";$("key-check-result").hidden=true;$("key-indicator").parentElement.dataset.ready="false";$("test-key").disabled=true;$("launch-panel").hidden=pairing;}
+  try{const cfg=await A.api("/api/settings",{timeout:6000});connected=true;connectionFailures=0;keyState(cfg);$("connection").textContent="本地已连接";$("connection").className="chip";$("launch-panel").hidden=true;}
+  catch(e){connectionFailures++;if(e.kind==="timeout"&&connected&&connectionFailures<2){$("connection").textContent="正在复核连接";return;}connected=false;configured=false;const pairing=e.status===401||e.message.includes("口令");$("connection").textContent=launching?"正在启动":pairing?"需要配对":"待连接";$("connection").className="chip warn";$("key-indicator").textContent=pairing?"请连接本机启动器以恢复扩展配对":"服务连接后读取 Key";$("key-check-result").hidden=true;$("key-indicator").parentElement.dataset.ready="false";$("test-key").disabled=true;$("launch-panel").hidden=false;}
 }
 async function inspectTab(){
-  inspection=null;try{inspection=await A.send("INSPECT",{tabId:tab.id});paintScene();}
-  catch{$("course").textContent="选择一节课";$("source").textContent="尚未选择";$("lesson").textContent="从上方选择已打开的播放页，或进入学校课时页面。";}
+  if(inspecting||!tab?.id)return;inspecting=true;lastInspection=Date.now();const id=tab.id;
+  try{const value=await A.send("INSPECT",{tabId:id,includeCatalogue:false});if(tab?.id!==id)return;inspection=value;inspectionError="";paintScene(recorderStatus);}
+  catch(e){if(tab?.id!==id)return;inspectionError=e.message;if(!inspection){$("course").textContent="正在读取课时";$("source").textContent="自动重试中";$("lesson").textContent=e.message;}}
+  finally{inspecting=false;}
 }
 function show(text,error=false){$("message").textContent=text;$("message").className="notice"+(error?" error":"");}
 function paintScene(state={}){
@@ -17,8 +19,11 @@ function paintScene(state={}){
   document.body.classList.toggle("is-recording",view.recording);
   $("scene-label").textContent=view.title;$("start-label").textContent=view.startLabel;
   $("action-hint").textContent=view.hint;$("action-hint").hidden=view.recording;
+  const available=PopupState.availability(inspection,state,{connected});
+  $("start").disabled=acting.has("start")||!available.canStart;
+  if(available.reason&&!view.recording){$("action-hint").textContent=inspectionError&&!inspection?inspectionError+"；会自动重试。":available.reason;$("action-hint").hidden=false;}
   $("start").classList.toggle("primary",!view.replay);$("process").classList.toggle("primary",view.replay);
-  $("process").disabled=!connected||!view.importable||acting.has("process");
+  $("process").disabled=!connected||!view.importable||acting.has("process")||importPending;
   $("lifecycle-note").hidden=!view.recording;
   $("recorder").parentElement.hidden=!view.recording&&!state.pending&&!state.error;
   $("start").hidden=view.recording;$("stop").hidden=!view.recording;
@@ -39,7 +44,7 @@ if(!globalThis.chrome?.runtime?.id||new URLSearchParams(location.search).get("pr
 async function action(id,fn){acting.add(id);$(id).disabled=true;try{await fn();}catch(e){show(e.message,true);}finally{acting.delete(id);$(id).disabled=false;await recorder();}}
 async function recorder(){
   if(reading)return;reading=true;
-  try{if(Date.now()-lastConnection>5000){lastConnection=Date.now();await refreshConnection();}const state=await A.send("RECORDER_STATE",{tabId:tab?.id});const running=!!state?.recording;
+  try{if(Date.now()-lastConnection>5000){lastConnection=Date.now();await refreshConnection();if(tab?.id){const current=await chrome.tabs.get(tab.id);if(inspection?.context?.url&&current.url!==inspection.context.url){inspection=null;inspectionError="";importPending=false;}tab=current;}}if(!inspection&&Date.now()-lastInspection>5000)void inspectTab();const id=tab?.id;let state;try{state=await A.send("RECORDER_STATE",{tabId:id});}catch(e){state={...recorderStatus,unknown:true,error:e.message};}if(tab?.id!==id)return;recorderStatus=state||{};const running=!!state?.recording;
     paintScene(state||{});
     $("expand-room").textContent=running?"返回课堂实况 ↗":"查看上次课堂 ↗";
     $("expand-room").classList.toggle("primary",running);
@@ -52,11 +57,11 @@ async function recorder(){
     }else {activeSession=null;$("live-context").hidden=true;if(!editing)$("analysis").checked=V.analysisEnabled(preferences,null);}
     $("recorder").textContent=state?.error||(running?"正在听课 · 待上传 "+(state.pending||0)+" 段":state?.pending?"正在补传 "+state.pending+" 段":"当前没有录音 · 历史字幕在课程笔记中");
     if(!acting.has("stop"))$("stop").disabled=!running;
-    if(!acting.has("start"))$("start").disabled=!connected||!inspection||running||!!state?.pending;
     $("analysis").disabled=!configured||editing;if(!configured)$("analysis").checked=false;
     if(connected&&inspection){
       const entries=await A.api("/api/imports");
       const entry=entries.filter(i=>i.course_id===inspection.lesson.course_id&&i.sub_id===inspection.lesson.sub_id).sort((a,b)=>b.created_at-a.created_at)[0];
+      importPending=entry?.status==="pending";
       $("import-progress").hidden=!entry;
       if(entry){importSession=entry.sid;
         $("import-state").textContent={pending:"正在读取学校数据",failed:"本节课导入未完成",queued:"本节课已交给本地处理",cancelled:"已停止导入"}[entry.status];
@@ -64,13 +69,19 @@ async function recorder(){
         if(entry.status==="pending")$("process").disabled=true;
       }
     }
-  }catch(e){$("recorder").textContent=e.message;}finally{reading=false;}
+  }catch(e){$("recorder").textContent=e.message;}finally{paintScene(recorderStatus);reading=false;}
+}
+async function launchService(){
+  if(launching)return;launching=true;$("launch-service").setAttribute("aria-busy","true");$("connection").textContent="正在启动";show("正在启动并连接本地服务，请等待结果，无需重复点击。");
+  try{await A.startLocalService();lastConnection=0;await refreshConnection();show("本地服务已连接，扩展配对已自动恢复。");}
+  catch(e){show(e.message,true);$("launch-compat").hidden=false;}
+  finally{launching=false;$("launch-service").removeAttribute("aria-busy");await recorder();}
 }
 $("options").onclick=()=>chrome.runtime.openOptionsPage();
 $("key-settings").onclick=()=>chrome.tabs.create({url:chrome.runtime.getURL("options.html#intelligence")});
 $("test-key").onclick=()=>action("test-key",async()=>{$("key-check-result").hidden=false;$("key-check-result").textContent="正在验证 Key 与模型…";const result=await A.api("/api/deepseek/check",{method:"POST",timeout:15000});$("key-check-result").textContent=result.message;lastConnection=0;});
-$("launch-service").onclick=()=>{show("已请求启动。浏览器询问时选择“打开”，连接会自动恢复。");lastConnection=0;};
-$("course-tab").onchange=async()=>{tab=$("course-tab").value?await chrome.tabs.get(Number($("course-tab").value)):null;await inspectTab();await recorder();};
+$("launch-service").onclick=e=>{e.preventDefault();void launchService();};
+$("course-tab").onchange=async()=>{tab=$("course-tab").value?await chrome.tabs.get(Number($("course-tab").value)):null;inspection=null;inspectionError="";activeSession=null;importPending=false;recorderStatus={unknown:true};$("course").textContent="正在读取课时…";$("lesson").textContent="";paintScene(recorderStatus);await inspectTab();await recorder();};
 $("legacy").onclick=()=>location.href="popup.html";
 $("dashboard").onclick=()=>A.openDashboard(null,tab?.id);
 $("session-detail").onclick=()=>A.openDashboard(activeSession?.id,tab?.id);
@@ -92,8 +103,8 @@ $("process").onclick=()=>action("process",async()=>{if(!inspection)throw new Err
   if(sourceTab>0)tab=await chrome.tabs.get(sourceTab);else [tab]=await chrome.tabs.query({active:true,currentWindow:true});
   const courses=await chrome.tabs.query({url:["https://video.jw.scut.edu.cn/livingroom*","https://video-jw-443.webvpn.scut.edu.cn/livingroom*"]});
   if(courses.length){$("course-picker").hidden=false;$("course-tab").replaceChildren(new Option("选择正在学习的课时",""),...courses.map(t=>new Option(t.title,t.id)));if(courses.some(t=>t.id===tab?.id))$("course-tab").value=String(tab.id);else if(courses.length===1){tab=courses[0];$("course-tab").value=String(tab.id);}}
-  await inspectTab();await refreshConnection();lastConnection=Date.now();
+  await Promise.all([inspectTab(),refreshConnection()]);lastConnection=Date.now();
   $("process").disabled=!connected||!inspection||["1","2","3","5","9"].includes(String(inspection.status));
-  await recorder();setInterval(()=>void recorder(),1500);
+  await recorder();setInterval(()=>void recorder(),1500);if(!connected&&!autoLaunchTried){autoLaunchTried=true;void launchService();}
 })();
 })();

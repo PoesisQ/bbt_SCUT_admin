@@ -21,12 +21,12 @@ globalThis.AssistantClient = {
         ...(body !== undefined ? {"Content-Type":raw?"audio/wav":"application/json"}:{})},
         body:body===undefined?undefined:raw?body:JSON.stringify(body),signal:AbortSignal.timeout(timeout)});
     } catch (error) {
-      if (error?.name === "TimeoutError") throw new Error("本地服务响应超时，可能仍在处理；请稍后刷新。");
-      throw new Error("暂时无法连接本地服务。请检查右上角连接状态，稍后刷新；仍未连接时再启动服务。");
+      const failure=new Error(error?.name === "TimeoutError"?"本地服务响应超时，可能仍在处理；请稍后刷新。":"暂时无法连接本地服务。请检查右上角连接状态，稍后刷新；仍未连接时再启动服务。");
+      failure.kind=error?.name === "TimeoutError"?"timeout":"network";throw failure;
     }
     if (!response.ok) {
       const result = await response.json().catch(()=>({}));
-      throw new Error(typeof result.detail==="string"?result.detail:`本地服务 HTTP ${response.status}`);
+      const failure=new Error(typeof result.detail==="string"?result.detail:`本地服务 HTTP ${response.status}`);failure.status=response.status;failure.kind=response.status===401?"pairing":"http";throw failure;
     }
     return path.endsWith("/export") ? response.blob() : response.json();
   },
@@ -34,6 +34,9 @@ globalThis.AssistantClient = {
     const response = await chrome.runtime.sendMessage({type,...data});
     if (!response?.ok) throw new Error(response?.error || "扩展后台无响应，请重新加载扩展");
     return response.data;
+  },
+  async startLocalService() {
+    return this.send("START_LOCAL_SERVICE");
   },
   async download(sid) {
     const blob=await this.api(`/api/sessions/${sid}/export`);

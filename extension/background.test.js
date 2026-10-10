@@ -1,14 +1,14 @@
 const test=require("node:test"),assert=require("node:assert/strict"),vm=require("node:vm"),fs=require("node:fs"),path=require("node:path");
 
 function harness({paused=false,recorderError=false,subtitle={code:10002,msg:"未查询到语音数据",total:0,list:[]},infoError=false,journalError=false}={}) {
-  const local={token:"unit-test-token"},session={},requests=[],recorder=[],listeners=[],contexts=[],documents=[];let created=0;
+  const local={token:"unit-test-token"},session={},requests=[],recorder=[],listeners=[],contexts=[],documents=[],live=new Map();let created=0;
   const id="a".repeat(32),sid="b".repeat(32),base=`chrome-extension://${id}/`;
   const event=()=>{const handlers=[];return {addListener(fn){handlers.push(fn);},async emit(...args){for(const fn of handlers)await fn(...args);}};};
   function storage(values){return {async get(key){if(typeof key==="string")return {[key]:values[key]};return {...key,...values};},async set(value){Object.assign(values,value);},async remove(key){delete values[key];},async setAccessLevel(){}};}
   const chrome={
     storage:{local:storage(local),session:storage(session)},
     runtime:{id,getURL:file=>base+file,getContexts:async()=>contexts,onStartup:event(),
-      onMessage:{addListener(fn){listeners.push(fn);}},async sendMessage(m){recorder.push(m);return recorderError&&m.type==="START"?{ok:false,error:"capture denied"}:{ok:true,data:{pending:0}};}},
+      onMessage:{addListener(fn){listeners.push(fn);}},async sendMessage(m){recorder.push(m);if(recorderError&&m.type==="START")return {ok:false,error:"capture denied"};if(m.type==="START")live.set(m.capture.sid,m.capture);if(m.type==="STOP")live.delete(m.sid);const capture=m.sid?live.get(m.sid):m.tabId!=null?[...live.values()].find(c=>c.tabId===m.tabId):live.values().next().value;return {ok:true,data:{pending:0,recording:!!capture,sid:capture?.sid||m.sid||null}};}},
     tabs:{async get(tabId){return {id:tabId,active:true,windowId:1,url:"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882"};},async sendMessage(){},onRemoved:event(),onUpdated:event()},
     windows:{async get(){return {focused:true};}},
     scripting:{async executeScript(options){if(options.files)return [];
@@ -42,6 +42,20 @@ function harness({paused=false,recorderError=false,subtitle={code:10002,msg:"未
 test("school content scripts cannot start capture or retrieve the local pairing token",async()=>{
   const h=harness();assert.equal(await h.send({type:"GET_CONNECTION"},{content:true}),null);
   assert.equal(await h.send({type:"START_CAPTURE",tabId:7},{content:true}),null);assert.equal(h.requests.length,0);
+  assert.equal(await h.send({type:"START_LOCAL_SERVICE"},{content:true}),null);
+});
+
+test("native launch is shared across clicks and restores the local pairing without exposing it",async()=>{
+  const h=harness();let calls=0;
+  h.context.chrome.runtime.sendNativeMessage=async(name,message)=>{calls++;assert.equal(name,"com.poesis.scut_classroom");assert.equal(message.action,"start");await new Promise(r=>setTimeout(r,10));return {ok:true,token:"restored-native-token",version:"0.10.8"};};
+  const results=await Promise.all([h.send({type:"START_LOCAL_SERVICE"}),h.send({type:"START_LOCAL_SERVICE"})]);
+  assert.equal(calls,1);assert.ok(results.every(r=>r.ok));assert.equal(h.local.token,"restored-native-token");
+  assert.ok(results.every(r=>!JSON.stringify(r).includes("restored-native-token")));
+});
+
+test("stale captures are cleared when the audio background no longer exists",async()=>{
+  const h=harness();h.session.activeCaptures={"7":{sid:h.sid,tabId:7}};
+  const result=await h.send({type:"RECORDER_STATE",tabId:7});assert.equal(result.data.recording,false);assert.equal(result.data.sid,null);assert.equal(Object.keys(h.session.activeCaptures).length,0);
 });
 
 test("automatic school entry stays in-page even after repeated ready messages, and respects opt-out",async()=>{

@@ -5,6 +5,22 @@ chrome.runtime.onInstalled?.addListener(({reason})=>{
   if(reason==="install")void chrome.tabs.create({url:chrome.runtime.getURL("welcome.html")});
 });
 let creatingOffscreen, batchRunning=false, startingBatch=false;
+let launchingService=null;
+async function startLocalService(){
+  if(launchingService)return launchingService;
+  launchingService=(async()=>{
+    if(!chrome.runtime.sendNativeMessage)throw new Error("当前扩展尚未启用本地启动通道，请在扩展管理中重新加载一次");
+    let result;
+    try{result=await chrome.runtime.sendNativeMessage("com.poesis.scut_classroom",{action:"start"});}
+    catch{throw new Error("本地启动通道尚未安装。请运行一次项目启动器，再重新加载扩展；之后可直接在浏览器启动。");}
+    if(!result?.ok)throw new Error(result?.error||"本地启动器没有返回状态");
+    if(typeof result.token!=="string"||!result.token)throw new Error("本地启动器未返回连接信息");
+    await A.setConnection(result.token);
+    await A.api("/api/health",{timeout:10000});
+    return {connected:true,version:result.version};
+  })();
+  try{return await launchingService;}finally{launchingService=null;}
+}
 const startingCaptures=new Set();
 let captureMutation=Promise.resolve();
 
@@ -49,9 +65,10 @@ async function updateBadge(captures){
 async function recorderState(selector={}){
   const capture=await captureFor(selector);
   const contexts=await chrome.runtime.getContexts({contextTypes:["OFFSCREEN_DOCUMENT"],documentUrls:[chrome.runtime.getURL("offscreen.html")]});
-  if(!contexts.length)return {recording:false,pending:0,sid:capture?.sid||null,tabId:capture?.tabId||selector.tabId||null};
+  if(!contexts.length){if(capture&&!startingCaptures.has(capture.tabId))await removeCapture(capture);return {recording:false,pending:0,sid:null,tabId:selector.tabId||null};}
   const result=await chrome.runtime.sendMessage({target:"offscreen",type:"STATE",sid:capture?.sid||selector.sid,tabId:capture?.tabId||selector.tabId});
   if(!result?.ok)throw new Error(result?.error||"暂时无法读取录音状态");
+  if(capture&&!result.data?.recording&&!result.data?.pending&&!startingCaptures.has(capture.tabId)){await removeCapture(capture);return {...result.data,sid:null};}
   return result.data;
 }
 async function installOverlay(tabId){await chrome.scripting.executeScript({target:{tabId},files:["session-view.js","overlay.js"]});}
@@ -212,11 +229,12 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         await chrome.tabs.create({url:chrome.runtime.getURL("dashboard.html?"+params)});return true;
       }
       case "INSPECT": {
-        const result=await SchoolAPI.inspect(message.tabId);
+        const result=await SchoolAPI.inspect(message.tabId,{includeCatalogue:message.includeCatalogue!==false});
         const key=`media-${message.tabId}`;const observed=(await chrome.storage.session.get(key))[key]||[];
         for(const url of observed)if(!result.sources.some(s=>s.url===url))result.sources.push({url,label:"播放器实际请求",kind:result.status==="1"?"live":"replay",format:new URL(url).pathname.split(".").pop()});
         return result;
       }
+      case "START_LOCAL_SERVICE": return startLocalService();
       case "START_CAPTURE": return startCapture(message);
       case "STOP_CAPTURE": {
         const capture=await captureFor({tabId:message.tabId,sid:message.sid});

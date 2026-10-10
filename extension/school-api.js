@@ -29,11 +29,11 @@ globalThis.SchoolAPI = {
     if(!result||result.error) throw new Error(result?.error||"课程页未响应");
     return result.data;
   },
-  async inspect(tabId) {
+  async inspect(tabId,{includeCatalogue=true}={}) {
     const context=await this.context(tabId);
     const info=(await this.get(context,"info"))?.data||{};
     const media=ScutStudy.mediaSources(info,context.origin);
-    const cat=await this.get(context,"catalogue").then(ScutStudy.catalogue).catch(()=>[]);
+    const cat=includeCatalogue?await this.get(context,"catalogue").then(ScutStudy.catalogue).catch(()=>[]):[];
     return {context,lesson:ScutStudy.lesson(info,context),status:String(info.sub_status),sources:media,catalogue:cat};
   }
 };

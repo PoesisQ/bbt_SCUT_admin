@@ -11,3 +11,4 @@ New-ItemProperty -LiteralPath $scutProtocolKey -Name 'URL Protocol' -Value '' -P
 $scutCommand = '"' + $scutPowerShell + '" -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $scutLauncher + '" -NoBrowser'
 Set-Item -LiteralPath $scutCommandKey -Value $scutCommand
 Write-Host 'Browser launcher registered for this Windows user. No startup task was created.'
+& (Join-Path $PSScriptRoot 'register-native-launcher.ps1')

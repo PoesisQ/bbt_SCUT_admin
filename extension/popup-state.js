@@ -8,5 +8,9 @@
       startLabel:replay?"播放时显示实时字幕":"开始实时字幕",
       hint:recording?"字幕与提醒持续保存在本机。":replay?"优先读取学校字幕；没有字幕时在本机转写。":inspection?"播放课程后开始，只识别当前标签页的声音。":"请先打开一节课的学校播放页。"};
   }
-  const api={scene};if(typeof module!=="undefined"&&module.exports)module.exports=api;root.PopupState=api;
+  function availability(inspection,state={},connection={}){
+    const reason=!connection.connected?"正在连接本地服务，连接成功后可开始字幕。":!inspection?"正在读取课时信息；请保持学校播放页打开，失败后会自动重试。":state.unknown?"正在重新读取本课录音状态，请稍候。":state.recording?"本课正在录音。":state.pending?"本课音频正在补传，完成后可再次开始。":"";
+    return {canStart:!reason,reason};
+  }
+  const api={scene,availability};if(typeof module!=="undefined"&&module.exports)module.exports=api;root.PopupState=api;
 })(globalThis);
