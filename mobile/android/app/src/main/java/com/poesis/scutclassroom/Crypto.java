@@ -18,8 +18,7 @@ final class Crypto {
         Cipher cipher=Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.DECRYPT_MODE,new SecretKeySpec(key,"AES"),new GCMParameterSpec(128,iv));
         cipher.updateAAD(("dsh-remote/v2|"+p.channel+"|"+direction+"|"+id).getBytes(StandardCharsets.UTF_8));
         JSONObject env=new JSONObject(new String(cipher.doFinal(blob),StandardCharsets.UTF_8));
-        long age=System.currentTimeMillis()-env.getLong("ts");
-        if(env.getInt("v")!=2 || !id.equals(env.getString("id")) || age>7L*24*3600*1000 || age < -5L*60*1000) throw new Exception("消息校验失败");
+        RelayPolicy.validate(env.getInt("v"), id, env.getString("id"), env.getLong("ts"), System.currentTimeMillis());
         return env;
     }
     static byte[] hkdf(byte[] input,byte[] salt,byte[] info)throws Exception{Mac m=Mac.getInstance("HmacSHA256");m.init(new SecretKeySpec(salt,"HmacSHA256"));byte[] prk=m.doFinal(input);m.init(new SecretKeySpec(prk,"HmacSHA256"));m.update(info);m.update((byte)1);byte[] out=m.doFinal();byte[] key=new byte[32];System.arraycopy(out,0,key,0,32);return key;}

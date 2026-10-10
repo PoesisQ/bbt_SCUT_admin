@@ -21,5 +21,12 @@ final class Pairing {
     static byte[] decode(String value) { return Base64.decode(value, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING); }
     static SharedPreferences prefs(Context c) { return c.getSharedPreferences("classroom-private", Context.MODE_PRIVATE); }
     static Pairing load(Context c) { try { String code=prefs(c).getString("pairing", ""); return code.isEmpty()?null:new Pairing(code); } catch(Exception e) { return null; } }
-    void save(Context c) { prefs(c).edit().putString("pairing", code).putBoolean("enabled", true).putString("cursor", "0-0").apply(); }
+    void save(Context c) {
+        synchronized (Pairing.class) {
+        SharedPreferences p = prefs(c);
+        SharedPreferences.Editor edit = p.edit().putString("pairing", code).putBoolean("enabled", true).remove("last_error");
+        if (!code.equals(p.getString("pairing", ""))) edit.putString("cursor", "0-0").remove("last_sync");
+        edit.apply();
+        }
+    }
 }

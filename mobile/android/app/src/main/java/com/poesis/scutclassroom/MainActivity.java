@@ -19,7 +19,7 @@ import java.util.*;
 
 public class MainActivity extends Activity {
     LinearLayout root, history;
-    TextView state, countView, syncView, errorView;
+    TextView state, countView, syncView, errorView, connectionBadge, emptyTitle;
     EditText code;
     Switch enabled;
     boolean showPairing;
@@ -38,11 +38,11 @@ public class MainActivity extends Activity {
         render();
     }
 
-    @Override protected void onResume() { super.onResume(); ui.removeCallbacks(refreshLoop); ui.post(refreshLoop); }
+    @Override protected void onResume() { super.onResume(); if(Pairing.load(this)!=null && Pairing.prefs(this).getBoolean("enabled",false))startForegroundService(new Intent(this,RelayService.class)); ui.removeCallbacks(refreshLoop); ui.post(refreshLoop); }
     @Override protected void onPause() { ui.removeCallbacks(refreshLoop); super.onPause(); }
 
     void render() {
-        history=null; state=null; historySnapshot=null;
+        history=null; state=null; emptyTitle=null; historySnapshot=null;
         ScrollView scroll=new ScrollView(this);
         scroll.setFillViewport(true);
         root=new LinearLayout(this);
@@ -64,7 +64,7 @@ public class MainActivity extends Activity {
         TextView name=text("课堂提醒",18,ink); name.setTypeface(Typeface.DEFAULT,Typeface.BOLD); words.addView(name);
         TextView sub=text("SCUT  ·  PRIVATE",9,muted); sub.setLetterSpacing(.16f); words.addView(sub,margin(0,2,0,0));
         row.addView(words,new LinearLayout.LayoutParams(0,-2,1));
-        TextView badge=text(paired?"已连接":"待配对",11,paired?green:muted); badge.setGravity(Gravity.CENTER);
+        TextView badge=text(paired?"已配对":"待配对",11,paired?green:muted); connectionBadge=badge; badge.setGravity(Gravity.CENTER);
         badge.setBackground(round(paired?Color.rgb(234,248,240):Color.rgb(238,240,245),99,0,Color.TRANSPARENT));
         row.addView(badge,new LinearLayout.LayoutParams(dp(70),dp(34)));
         root.addView(row);
@@ -92,6 +92,8 @@ public class MainActivity extends Activity {
         countView=metric("0", "本机提醒"); syncView=metric("等待同步", "最近连接");
         metrics.addView(countView,new LinearLayout.LayoutParams(0,-2,1)); metrics.addView(syncView,new LinearLayout.LayoutParams(0,-2,1)); status.addView(metrics);
         errorView=text("",12,Color.rgb(184,67,69)); errorView.setVisibility(View.GONE); status.addView(errorView,margin(0,13,0,0));
+        Button reconnect=linkButton("立即重试连接"); status.addView(reconnect,marginHeight(0,8,0,0,42));
+        reconnect.setOnClickListener(v->{Pairing.prefs(this).edit().putBoolean("enabled",true).apply();startForegroundService(new Intent(this,RelayService.class).setAction(RelayService.RETRY));refreshDashboard();});
         root.addView(status);
 
         boolean on=Pairing.prefs(this).getBoolean("enabled",false); enabled.setChecked(on);
@@ -138,7 +140,7 @@ public class MainActivity extends Activity {
         try {
             Pairing p=new Pairing(raw); p.save(this); showPairing=false;
             startForegroundService(new Intent(this,RelayService.class));
-            Toast.makeText(this,"连接成功，正在同步提醒",Toast.LENGTH_LONG).show(); render();
+            Toast.makeText(this,"配对已保存，正在连接课堂信箱",Toast.LENGTH_LONG).show(); render();
         } catch(Exception e) { Toast.makeText(this,e.getMessage(),Toast.LENGTH_LONG).show(); }
     }
 
@@ -146,22 +148,27 @@ public class MainActivity extends Activity {
         if(history==null || state==null) return;
         boolean on=Pairing.prefs(this).getBoolean("enabled",false);
         JSONArray rows=History.list(this);
-        state.setText(on?"后台监听中":"提醒已暂停");
         if(enabled!=null && enabled.isChecked()!=on) enabled.setChecked(on);
         countView.setText(String.format(Locale.CHINA,"%d 条\n本机提醒",rows.length()));
         long last=Pairing.prefs(this).getLong("last_sync",0);
         syncView.setText(String.format(Locale.CHINA,"%s\n最近连接",last==0?"连接中":clock(last)));
         String err=Pairing.prefs(this).getString("last_error","");
-        errorView.setText(err.isEmpty()?"":"暂时无法连接，后台会自动重试"); errorView.setVisibility(err.isEmpty()?View.GONE:View.VISIBLE);
+        boolean connected=on && err.isEmpty() && last>0 && System.currentTimeMillis()-last<90000;
+        boolean catchingUp=Pairing.prefs(this).getBoolean("catching_up",false);
+        state.setText(!on?"提醒已暂停":connected?(catchingUp?"正在补齐历史提醒":"课堂信箱已连接"):!err.isEmpty()?"正在重新连接":"正在连接课堂信箱");
+        connectionBadge.setText(!on?"已暂停":connected?"已连接":"连接中");
+        connectionBadge.setTextColor(connected?green:muted);
+        errorView.setText(on?err:""); errorView.setVisibility(on&&!err.isEmpty()?View.VISIBLE:View.GONE);
         String snapshot=rows.toString();
         if(!snapshot.equals(historySnapshot)){historySnapshot=snapshot;renderHistory(rows);}
+        if(emptyTitle!=null)emptyTitle.setText(connected?"等待下一条课堂提醒":!on?"提醒已暂停":"正在连接，已有记录会保留");
     }
 
     void renderHistory(JSONArray rows) {
-        history.removeAllViews();
+        history.removeAllViews(); emptyTitle=null;
         if(rows.length()==0) {
             LinearLayout empty=card(Color.WHITE); ImageView art=new ImageView(this); art.setImageResource(R.drawable.classroom_mark); art.setAlpha(.82f); art.setScaleType(ImageView.ScaleType.CENTER_INSIDE); empty.addView(art,new LinearLayout.LayoutParams(-1,dp(88)));
-            TextView title=text("已连接，等待下一条课堂提醒",16,ink);title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);title.setGravity(Gravity.CENTER);empty.addView(title,margin(0,8,0,0));
+            TextView title=text("正在连接课堂信箱",16,ink);emptyTitle=title;title.setTypeface(Typeface.DEFAULT,Typeface.BOLD);title.setGravity(Gravity.CENTER);empty.addView(title,margin(0,8,0,0));
             TextView desc=text("收到的信息会自动出现在这里，无需重新打开 App。",12,muted);desc.setGravity(Gravity.CENTER);empty.addView(desc,margin(0,7,0,0)); history.addView(empty,margin(0,12,0,0)); return;
         }
         for(int i=0;i<Math.min(rows.length(),200);i++) {

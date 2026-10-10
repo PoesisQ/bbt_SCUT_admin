@@ -3,10 +3,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
 import secrets
 import threading
 import time
 from pathlib import Path
+from urllib.request import getproxies
 
 import httpx
 from cryptography.hazmat.primitives import hashes
@@ -19,6 +21,12 @@ APP_ID = "scut-classroom"
 RELAY_URL = "https://ironegg.vercel.app"
 PAIRING_PREFIX = "SCUT1."
 ALERT_CATEGORIES = {"attendance", "qr", "question", "assignment", "quiz", "requirements", "schedule", "grading", "reminder"}
+
+
+def relay_proxy() -> str | None:
+    # httpx does not read Windows Internet Settings. Respect the user's HTTPS
+    # proxy for the remote relay only; localhost requests remain direct.
+    return getproxies().get("https") if os.name == "nt" else None
 
 
 def b64(value: bytes) -> str:
@@ -92,13 +100,17 @@ class MobileNotifier:
         self.stop.set()
 
     def status(self):
+        configuration_error = ""
         try:
             configured = bool(self.settings.mobile_pairing())
-        except ValueError:
+            if not configured and self.settings.data.get("mobile_notifications_enabled"):
+                configuration_error = "未找到手机配对信息，请检查提醒设置"
+        except ValueError as exc:
             configured = False
+            configuration_error = str(exc)
         return {"enabled": self.settings.data.get("mobile_notifications_enabled", False),
                 "configured": configured, "pending": len(self.state["outbox"]),
-                "last_success": self.last_success, "last_error": self.last_error}
+                "last_success": self.last_success, "last_error": configuration_error or self.last_error}
 
     def _identity(self, pairing):
         return hashlib.sha256((pairing["app_id"] + ":" + pairing["channel"]).encode()).hexdigest()
@@ -153,7 +165,8 @@ class MobileNotifier:
             return
         item = self.state["outbox"][0]
         url = f"{pairing['relay_url']}/api/apps/{pairing['app_id']}/push"
-        with httpx.Client(timeout=15, transport=self.transport, trust_env=False) as client:
+        with httpx.Client(timeout=15, transport=self.transport, trust_env=False,
+                          proxy=relay_proxy() if self.transport is None else None) as client:
             response = client.post(url, headers={"Authorization": "Bearer " + pairing["auth_token"]}, json={
                 "channel": pairing["channel"], "direction": "to-phone", "id": item["id"], "wire": item["wire"]})
         if response.status_code != 201 or response.json().get("ok") is not True:

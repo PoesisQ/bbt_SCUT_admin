@@ -92,3 +92,26 @@ class MobileProtocolTests(unittest.TestCase):
                 self.assertEqual(notifier.state["outbox"], [])
                 self.assertEqual(len(seen), 1)
             store.db.close()
+
+    def test_enabled_without_pairing_reports_configuration_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(Path(tmp)); store = Store(settings.root)
+            settings.data["mobile_notifications_enabled"] = True
+            value = MobileNotifier(settings, store).status()
+            self.assertFalse(value["configured"])
+            self.assertIn("配对", value["last_error"])
+            store.db.close()
+
+    def test_relay_failure_keeps_durable_outbox_for_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            settings = Settings(Path(tmp)); store = Store(settings.root); pairing = make_pairing()
+            settings.data["mobile_notifications_enabled"] = True
+            def relay(request):
+                return httpx.Response(503, json={"ok": False})
+            with patch.object(settings, "mobile_pairing", return_value=pairing):
+                notifier = MobileNotifier(settings, store, transport=httpx.MockTransport(relay))
+                notifier.queue("classroom-alert", {"message": "测试"}, "once")
+                with self.assertRaises(ValueError):
+                    notifier.flush()
+                self.assertEqual(len(MobileNotifier(settings, store).state["outbox"]), 1)
+            store.db.close()
