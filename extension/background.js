@@ -276,7 +276,7 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         try{
         const previous=(await chrome.storage.local.get("batch")).batch;
         if(previous&&!previous.cancelled&&previous.items.some(i=>i.status==="pending")) throw new Error("上一批课程仍在导入，请等待或停止后再试");
-        const context=await SchoolAPI.context(message.tabId);
+        const context=message.context?await SchoolAPI.resolveContext(message.context):await SchoolAPI.context(message.tabId);
         const ids=[...new Set(message.subIds||[])].filter(x=>/^\d+$/.test(x)).slice(0,200);
         if(!ids.length) throw new Error("请选择要处理的课时");
         await syncBatch(previous);

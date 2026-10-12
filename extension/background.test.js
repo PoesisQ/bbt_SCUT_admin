@@ -19,7 +19,7 @@ function harness({paused=false,recorderError=false,subtitle={code:10002,msg:"未
       else if(infoError)data={code:401};
       else data={code:0,data:{sub_status:"6",course_title:"测试课程",sub_title:"测试课时",content:{save_playback:{contents:"https://video.jw.scut.edu.cn/play/a.mp4"}}}};
       // Execute the actual isolated school GET function, so business codes exercise the real boundary.
-      const page={URL,AbortSignal,location:{origin:"https://video.jw.scut.edu.cn"},fetch:async()=>({ok:true,json:async()=>data})};
+      const page={URL,AbortSignal,location:{origin:"https://video.jw.scut.edu.cn",href:"https://video.jw.scut.edu.cn/livingroom?course_id=81526&sub_id=686882"},fetch:async()=>({ok:true,json:async()=>data})};
       vm.createContext(page);page.args=options.args;
       return [{result:await vm.runInContext(`(${options.func.toString()})(...args)`,page)}];}},
     offscreen:{async createDocument(data){documents.push(data);contexts.push({});}},tabCapture:{async getMediaStreamId(){return "test-stream-id";}},
@@ -173,4 +173,20 @@ test("published subtitles are imported directly, without replay ASR",async()=>{
   assert.equal(body.mode,"subtitle");assert.equal(body.source_url,undefined);
   assert.equal(JSON.parse(h.requests.find(r=>r.url.endsWith("/subtitles")).body).items.length,1);
   assert.equal(h.local.batch.items[0].status,"queued");
+});
+
+test("a loaded catalogue imports through a reopened tab without changing course identity",async()=>{
+  const h=harness(),saved=await h.context.SchoolAPI.context(7),get=h.context.chrome.tabs.get;
+  h.context.chrome.tabs.get=async id=>{if(id===7)throw Error("No tab with id: 7");return get(id);};
+  h.context.chrome.tabs.query=async()=>[await get(8)];
+  const result=await h.send({type:"START_BATCH",tabId:7,context:saved,subIds:["686882"]});assert.equal(result.ok,true,result.error);
+  await finishBatch(h);assert.equal(h.local.batch.context.tabId,8);assert.equal(h.local.batch.items[0].status,"queued");
+  const body=JSON.parse(h.requests.find(r=>r.url.endsWith("/api/sessions")).body);assert.equal(body.course_id,"81526");assert.equal(body.sub_id,"686882");
+});
+
+test("a loaded catalogue never follows its old tab into another course",async()=>{
+  const h=harness(),saved=await h.context.SchoolAPI.context(7);
+  h.context.chrome.tabs.get=async id=>({id,url:saved.url.replace("81526","99999")});h.context.chrome.tabs.query=async()=>[];
+  const result=await h.send({type:"START_BATCH",tabId:7,context:saved,subIds:["686882"]});assert.equal(result.ok,false);assert.match(result.error,/同一门课/);
+  assert.equal(h.local.batch,undefined);assert.equal(h.requests.length,0);
 });

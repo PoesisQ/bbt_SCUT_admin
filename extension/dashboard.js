@@ -2,6 +2,21 @@ const A=AssistantClient,L=CourseLibrary,$=id=>document.getElementById(id),isExte
 let sessions=[],imports=[],trashed=[],selected=null,detail=null,catalogue=[],catalogueCourse="",loading=false,detailStamp=0,listStamp="",course="",filter="lessons",eventCategory="all",focusedEventId=null,configured=false;
 const eventCache=new Map();
 let eventHydration=null,noticeSource="";
+let catalogueContext=null,catalogueRequest=0,sourceTabs=new Map(),sourceRefresh=0;
+function sourceCourse(url){try{const u=new URL(url);return u.origin+"/"+u.searchParams.get("course_id")+"/"+(u.searchParams.get("tenant_code")||"21");}catch{return "";}}
+async function refreshSourceTabs(){
+  if(!isExtension)return;
+  const stamp=++sourceRefresh,select=$("source-tab"),previous=sourceTabs.get(Number(select.value)),expected=catalogueContext?.url||previous?.url;
+  const tabs=await chrome.tabs.query({url:["https://video.jw.scut.edu.cn/livingroom*","https://video-jw-443.webvpn.scut.edu.cn/livingroom*"]});
+  if(stamp!==sourceRefresh)return;
+  const initial=new URLSearchParams(location.search).get("tab");
+  const chosen=expected?tabs.find(t=>String(t.id)===select.value&&sourceCourse(t.url)===sourceCourse(expected))||tabs.find(t=>sourceCourse(t.url)===sourceCourse(expected)):tabs.find(t=>String(t.id)===initial)||tabs[0];
+  sourceTabs=new Map(tabs.map(t=>[t.id,t]));
+  select.replaceChildren(new Option(tabs.length?"选择学校播放页":"请先打开学校课程播放页",""),...tabs.map(t=>new Option(t.title,t.id)));
+  select.value=chosen?String(chosen.id):"";$("load-catalogue").disabled=!chosen;
+  if(!chosen)$("batch-hint").textContent=expected?"这门课的播放页已关闭或切换；打开同一门课后可继续。":"请先打开要导入的课程播放页。";
+}
+function clearCatalogue(){catalogueRequest++;catalogue=[];catalogueContext=null;catalogueCourse="";$("catalogue").replaceChildren();$("start-batch").disabled=true;$("batch-hint").textContent="点击读取课时目录，选择要导入的课时。";}
 const params=new URLSearchParams(location.search);
 if(/^[a-f0-9]{32}$/.test(params.get("session")||""))selected=params.get("session");
 if(/^\d+$/.test(params.get("course")||""))course=params.get("course");
@@ -34,7 +49,7 @@ function completeSavedEvents(rows){
 function status(text,error=false,source="action"){noticeSource=source==="action"&&/本地服务未启动|暂时无法连接本地服务|本地服务响应超时/.test(text)?"connection":source;$("status").textContent=text;$("status").className="notice"+(error?" error":"");AssistantUI.toast(text);if($("import-dialog").open)$("batch-status").textContent=text;}
 function clearConnectionNotice(){if(noticeSource==="connection"){noticeSource="";$("status").textContent="";$("status").className="notice hidden";}}
 function seek(sec){if(detail.time_basis==="capture")return node("span",clock(sec),"muted");const url=new URL(detail.page_url);url.searchParams.set("note_play",Math.floor(sec));const a=node("a",clock(sec)+" ↗");a.href=url.href;a.target="_blank";a.rel="noopener noreferrer";a.title="从此处打开学校回放";return a;}
-async function act(button,fn){button.disabled=true;try{await fn();}catch(e){status(e.message,true);}finally{button.disabled=false;if(detail)renderAction();}}
+async function act(button,fn){button.disabled=true;try{await fn();}catch(e){status(e.message,true);}finally{button.disabled=button.id==="start-batch"&&(!catalogueContext||!catalogue.length);if(detail)renderAction();}}
 function matches(value){return !$("search").value.trim()||JSON.stringify(value).toLowerCase().includes($("search").value.trim().toLowerCase());}
 function navigate(id=null){
   if(!id)focusedEventId=null;
@@ -205,7 +220,7 @@ document.querySelectorAll("[data-filter]").forEach(b=>b.onclick=()=>{filter=b.da
 document.querySelectorAll("[data-view]").forEach(b=>b.onclick=()=>showView(b.dataset.view));
 document.querySelector(".tabs").addEventListener("keydown",e=>{if(!["ArrowLeft","ArrowRight","Home","End"].includes(e.key))return;const buttons=[...document.querySelectorAll("[data-view]")],i=buttons.indexOf(document.activeElement);if(i<0)return;e.preventDefault();const n=e.key==="Home"?0:e.key==="End"?buttons.length-1:(i+(e.key==="ArrowRight"?1:-1)+buttons.length)%buttons.length;buttons[n].click();buttons[n].focus();});
 $("return-classroom").onclick=()=>{if(isExtension)void A.openClassroom(Number($("source-tab").value)||null).catch(e=>status(e.message,true));else location.href="classroom.html";};
-$("open-import").onclick=()=>$("import-dialog").showModal();
+$("open-import").onclick=()=>{$("import-dialog").showModal();void refreshSourceTabs().catch(e=>status(e.message,true));};
 $("close-import").onclick=()=>$("import-dialog").close();
 $("repair").onclick=()=>act($("repair"),async()=>{const result=await A.api("/api/sessions/"+selected+"/repair",{method:"POST"});status("已安排 "+result.repair_count+" 段音频重新转写，旧字幕已备份。");detailStamp=0;await refresh();});
 $("export").onclick=()=>act($("export"),()=>A.download(selected));
@@ -216,16 +231,21 @@ $("regenerate").onclick=()=>act($("regenerate"),()=>analyze(true));
 for(const name of ["retry","cancel"])$(name).onclick=()=>act($(name),async()=>{await A.api("/api/sessions/"+selected+"/"+name,{method:"POST"});detailStamp=0;await refresh();});
 $("attach").onclick=()=>act($("attach"),async()=>{const tabs=await chrome.tabs.query({url:["https://video.jw.scut.edu.cn/livingroom*","https://video-jw-443.webvpn.scut.edu.cn/livingroom*"]});const tab=tabs.find(t=>{const u=new URL(t.url);return u.searchParams.get("course_id")===detail.course_id&&u.searchParams.get("sub_id")===detail.sub_id;});if(!tab)throw new Error("请先在浏览器中打开这节课的播放页");await A.send("ATTACH_REPLAY",{tabId:tab.id,sid:selected});status("字幕已显示，将跟随原视频播放位置。");});
 $("load-catalogue").onclick=()=>act($("load-catalogue"),async()=>{
-  const data=await A.send("INSPECT",{tabId:Number($("source-tab").value)});catalogue=data.catalogue;catalogueCourse=data.lesson.course_title;$("batch-hint").textContent=catalogueCourse;$("catalogue").replaceChildren();
+  await refreshSourceTabs();const tabId=Number($("source-tab").value);if(!tabId)throw new Error("请先打开并选择这门课的学校播放页");
+  const request=++catalogueRequest;const data=await A.send("INSPECT",{tabId});if(request!==catalogueRequest)return;
+  catalogue=data.catalogue;catalogueContext=data.context;catalogueCourse=data.lesson.course_title;$("batch-hint").textContent=catalogueCourse;$("catalogue").replaceChildren();
   for(const item of catalogue){const label=node("label",undefined,"lesson-check"),box=document.createElement("input");box.type="checkbox";box.value=item.sub_id;box.checked=!["1","2","3","5","9"].includes(item.status);box.disabled=!box.checked;label.append(box,node("span",item.title),node("small",box.disabled?"未就绪":"可处理"));$("catalogue").append(label);}
   if(!catalogue.length)throw new Error("未取得课程目录；请检查学校接口或重新打开课程页面");
+  $("start-batch").disabled=false;
 });
+$("source-tab").onchange=()=>{clearCatalogue();$("load-catalogue").disabled=!$("source-tab").value;};
+$("start-batch").disabled=true;
 $("select-ready").onclick=()=>$("catalogue").querySelectorAll("input:not(:disabled)").forEach(x=>x.checked=true);$("select-none").onclick=()=>$("catalogue").querySelectorAll("input").forEach(x=>x.checked=false);
-$("start-batch").onclick=()=>act($("start-batch"),async()=>{const subIds=[...$("catalogue").querySelectorAll("input:checked")].map(i=>i.value);await A.send("START_BATCH",{tabId:Number($("source-tab").value),subIds,lessons:catalogue.map(l=>({...l,course_title:catalogueCourse})),analysis:false,forceAsr:$("force-asr").checked});status("导入请求已保存，正在读取学校数据。进度和失败原因会保留在待整理中。");await refresh();});
+$("start-batch").onclick=()=>act($("start-batch"),async()=>{if(!catalogueContext||!catalogue.length)throw new Error("请先读取所选课程的课时目录");const subIds=[...$("catalogue").querySelectorAll("input:checked")].map(i=>i.value);await A.send("START_BATCH",{tabId:catalogueContext.tabId,context:catalogueContext,subIds,lessons:catalogue.map(l=>({...l,course_title:catalogueCourse})),analysis:false,forceAsr:$("force-asr").checked});status("导入请求已保存，正在读取学校数据。进度和失败原因会保留在待整理中。");await refresh();});
 $("stop-batch").onclick=()=>act($("stop-batch"),async()=>{await A.send("STOP_BATCH");status("已停止继续导入。已入队的本地课时可逐个取消。");});
 (async()=>{
   const token=new URLSearchParams(location.hash.slice(1)).get("token");if(token){await A.setConnection(token);history.replaceState(null,"",location.pathname+location.search);}
-  if(isExtension){const tabs=await chrome.tabs.query({url:["https://video.jw.scut.edu.cn/livingroom*","https://video-jw-443.webvpn.scut.edu.cn/livingroom*"]});for(const t of tabs)$("source-tab").add(new Option(t.title,t.id));const initial=new URLSearchParams(location.search).get("tab");if(initial&&tabs.some(t=>String(t.id)===initial))$("source-tab").value=initial;}
+  if(isExtension){await refreshSourceTabs();const changed=()=>{if($("import-dialog").open)void refreshSourceTabs().catch(e=>status(e.message,true));};chrome.tabs.onRemoved.addListener(changed);chrome.tabs.onUpdated.addListener((_id,change)=>{if(change.url||change.title||change.status==="complete")changed();});chrome.tabs.onCreated.addListener(changed);window.addEventListener("focus",changed);}
   else {$("batch-controls").hidden=true;$("batch-unavailable").hidden=false;}
   await refresh();if(params.get("import")==="1")$("import-dialog").showModal();setInterval(()=>void refresh(),3000);
 })();
