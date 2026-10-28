@@ -6,14 +6,17 @@ from datetime import date
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import Response, FileResponse
 from pydantic import Field, field_validator, model_validator
 
 from . import ingest
 from .planner import calendar, make_plan, review_interval, stamp
 from .reasoner import Provider, Strict, run_agent
 from .storage import StudyStore, digest
+from .attachments import accept_attachment, attachment_path
+from .dialogue import converse, home
+from .reviews import create_review, update_review
 from .timetable import expand_timetable, extract_timetable
 
 
@@ -31,6 +34,26 @@ class Ask(Strict):
     course: str = Field(min_length=1, max_length=160)
     question: str = Field(min_length=2, max_length=1200)
     purpose: Literal["ask", "verify", "requirements", "practice"] = "ask"
+
+
+class Chat(Strict):
+    conversation: str = Field(default="main", pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    client_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
+    course: str = Field(default="", max_length=160)
+    question: str = Field(min_length=1, max_length=3000)
+    purpose: Literal["auto", "ask", "verify", "requirements", "practice", "connect", "summary"] = "auto"
+    attachments: list[str] = Field(default_factory=list, max_length=4)
+    review_id: str | None = Field(default=None, max_length=80)
+
+
+class ReviewCreate(Strict):
+    turn_id: str = Field(max_length=80)
+    days: int = Field(default=1, ge=1, le=30)
+
+
+class ReviewUpdate(Strict):
+    action: Literal["complete", "snooze", "pause"]
+    rating: int | None = Field(default=None, ge=1, le=4)
 
 
 class Decide(Strict):
@@ -150,6 +173,60 @@ def router(settings, classroom_store):
     api = APIRouter(prefix="/api/study")
     model_gate = threading.BoundedSemaphore(1)
 
+    @api.get("/home")
+    def dialogue_home(conversation: str = "main"):
+        return home(study, conversation)
+
+    @api.post("/chat")
+    def chat(body: Chat):
+        if not model_gate.acquire(blocking=False):
+            raise HTTPException(409, "正在接着读上一条消息，稍后再发；内容会留在输入框中")
+        try:
+            ingest.sync_sessions(study, classroom_store.records())
+            return converse(study, provider, settings.root, **body.model_dump())
+        finally:
+            model_gate.release()
+
+    @api.post("/attachments")
+    async def upload(request: Request):
+        import json
+        from starlette.concurrency import run_in_threadpool
+        data = bytearray()
+        async for part in request.stream():
+            data.extend(part)
+            if len(data) > 17 * 1024 * 1024:
+                raise HTTPException(413, "附件太大，请缩小到 12 MB 内")
+        value = json.loads(data)
+        item = await run_in_threadpool(accept_attachment, study, settings.root, name=str(value.get("name", "")), content=value.get("content", ""))
+        return {k: item[k] for k in ("id", "name", "image", "bytes")}
+
+    @api.get("/attachments/{aid}/image")
+    def attachment_image(aid: str):
+        item = study.get(aid, "attachment")
+        if not item["image"]:
+            raise HTTPException(404)
+        return FileResponse(attachment_path(settings.root, item), media_type="image/png")
+
+    @api.post("/reviews")
+    def add_review(body: ReviewCreate):
+        turn = study.get(body.turn_id, "turn")
+        result = turn.get("result", {})
+        if turn["status"] != "ready" or not (result.get("claims") or result.get("exercise")):
+            raise ValueError("先完成一次有资料依据的交流，再安排这段内容的复习")
+        citations = [c for claim in result.get("claims", []) for c in claim["citations"]][:6]
+        topic = turn["question"][:180]
+        if result.get("exercise"):
+            citations += result["exercise"]["citations"]
+            topic = result["exercise"]["question"][:180]
+        elif len(topic) > 100 or "刚才" in topic:
+            topic = result["claims"][0]["text"][:150]
+        return create_review(study, course=turn["course"], topic=topic, citations=citations[:6],
+                             days=body.days, source=turn["id"])
+
+    @api.post("/reviews/{rid}")
+    def change_review(rid: str, body: ReviewUpdate):
+        return update_review(study, rid, **body.model_dump())
+
     @api.get("/overview")
     def overview():
         sources = study.sources()
@@ -211,8 +288,14 @@ def router(settings, classroom_store):
             raise ValueError("请先估计任务用时；较大的项目可以先拆成一个具体步骤")
         # Only this explicit user action turns model suggestions into tasks/memory.
         value = study.save("proposal", {**proposal, "status": body.status}, pid)
-        if proposal["proposal_kind"] == "task":
-            study.save("task", {**proposal, **body.model_dump(mode="json"), "source": "confirmed_proposal", "completed": False}, pid)
+        if proposal["proposal_kind"] == "task" and body.status == "accepted":
+            task_id = "task-" + pid
+            try:
+                existing = study.get(task_id, "task")
+            except KeyError:
+                existing = {}
+            study.save("task", {**proposal, **body.model_dump(mode="json"), "source": "confirmed_proposal", "proposal_id": pid,
+                               "completed": existing.get("completed", False), "spent_minutes": existing.get("spent_minutes", 0)}, task_id)
         return value
 
     @api.post("/tasks")

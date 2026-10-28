@@ -42,17 +42,32 @@ class Exercise(Strict):
     citations: list[Citation] = Field(min_length=1, max_length=5)
 
 
+class Connection(Strict):
+    concept_a: str = Field(min_length=1, max_length=120)
+    concept_b: str = Field(min_length=1, max_length=120)
+    relationship: str = Field(min_length=1, max_length=1000)
+    citations: list[Citation] = Field(min_length=2, max_length=5)
+
+
 class Final(Strict):
     action: Literal["finish"]
     claims: list[Claim] = Field(default_factory=list, max_length=10)
     uncertainties: list[str] = Field(default_factory=list, max_length=8)
     proposals: list[Proposal] = Field(default_factory=list, max_length=6)
     exercise: Exercise | None = None
+    reply: str = Field(default="", max_length=1000)
+    next_question: str = Field(default="", max_length=200)
+    connections: list[Connection] = Field(default_factory=list, max_length=4)
 
 
 class Search(Strict):
     action: Literal["search"]
     query: str = Field(min_length=1, max_length=200)
+
+
+class Read(Strict):
+    action: Literal["read"]
+    evidence_id: str = Field(max_length=80)
 
 
 class Provider:
@@ -86,7 +101,9 @@ class Provider:
     def public(self):
         try:
             cfg = self.config()
-            return {"id": cfg["id"], "model": cfg["model"], "configured": bool(cfg.get("key")) or urlparse(cfg["base_url"]).hostname in {"localhost", "127.0.0.1", "::1"}}
+            vision = cfg.get("supports_images", cfg.get("model") in {"deepseek-flash", "deepseek-v4-flash-vision-exp"}
+                             and urlparse(cfg["base_url"]).netloc == "api.deepseek.com")
+            return {"id": cfg["id"], "model": cfg["model"], "vision": bool(vision), "configured": bool(cfg.get("key")) or urlparse(cfg["base_url"]).hostname in {"localhost", "127.0.0.1", "::1"}}
         except (ValueError, KeyError, TypeError):
             return {"configured": False, "model": "配置需要检查"}
 
@@ -129,8 +146,11 @@ def check_citations(value, allowed):
             # PDF line wrapping is typography, not a changed word. Return the real
             # contiguous source slice, never the model's reflowed rendition.
             citation.quote = match.group(0)
-    for item in [*value.claims, *value.proposals, *([value.exercise] if value.exercise else [])]:
+    for item in [*value.claims, *value.proposals, *value.connections, *([value.exercise] if value.exercise else [])]:
         validate(item.citations)
+    for connection in value.connections:
+        if len({c.evidence_id for c in connection.citations}) < 2:
+            raise ValueError("知识关联需要两处不同证据，不能重复同一引文")
     for proposal in value.proposals:
         if proposal.kind == "correction" and len({allowed[c.evidence_id]["source_id"] for c in proposal.citations}) < 2:
             raise ValueError("转写纠正必须有不同来源支持；单一来源只能标记不确定")
@@ -139,9 +159,10 @@ def check_citations(value, allowed):
             raise ValueError("截止时间没有原文支持")
 
 
-def run_agent(store, provider, *, course, question, purpose="ask"):
+def run_agent(store, provider, *, course, question, purpose="ask", history=None, focus=None, max_steps=3):
     started = time.monotonic()
-    allowed, trace = {}, []
+    allowed = {item["id"]: item for item in (focus or [])[:6] if item["course"] == course and item.get("active", True)}
+    trace = []
 
     def retrieve(query):
         found = store.search(query, course, 6)
@@ -153,21 +174,26 @@ def run_agent(store, provider, *, course, question, purpose="ask"):
         return [{k: v for k, v in item.items() if k in {"id", "title", "kind", "locator", "text"}}
                 for item in found if item["id"] in allowed]
 
-    initial = retrieve(question)
+    history = (history or [])[-6:]
+    prior_topic = " ".join(x.get("question", "")[:160] for x in history[-2:])
+    initial = retrieve(question + " " + prior_topic)
+    initial = list({item["id"]: item for item in [*initial, *allowed.values()]}.values())
     catalog = [{k: v for k, v in item.items() if k in {"title", "kind"}} for item in store.sources(course)][:25]
     if not initial and not catalog:
-        return {"status": "needs_sources", "claims": [], "proposals": [], "uncertainties": ["这门课的已导入资料中没有匹配内容。请补充相应章节或换一个关键词。"], "trace": trace}
+        return {"status": "needs_sources", "reply": "这门课我还没有能参考的内容。先发一页课件、一张截图，或把困惑的原话贴过来就好。", "claims": [], "proposals": [], "uncertainties": [], "trace": trace}
     memory = [{"title": x["title"], "detail": x["detail"], "source": x.get("source", "student_confirmed_proposal")} for x in store.list("proposal")
               if x.get("course") == course and x.get("status") == "accepted" and x.get("proposal_kind") == "requirement"][:8]
     learner_state = [{"topic": p["question"], "attempt_count": len(p["attempts"]),
                       "last_self_rating": p["attempts"][-1]["rating"]}
                      for p in store.list("practice") if p.get("course") == course and p.get("attempts")][:5]
+    tasks = [{k: t.get(k) for k in ("title", "deadline", "estimate_min", "estimate_max", "spent_minutes", "completed")}
+             for t in store.list("task") if t.get("course") == course and t.get("status") == "accepted"][:8]
     messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": json.dumps({
-        "course": course, "question": question, "purpose": purpose, "confirmed_requirements": memory,
-        "source_data": initial, "source_catalog": catalog, "self_reported_learning": learner_state}, ensure_ascii=False)}]
+        "course": course, "question": question, "purpose": purpose, "confirmed_requirements": memory, "conversation": history,
+        "source_data": initial, "source_catalog": catalog, "self_reported_learning": learner_state, "confirmed_tasks": tasks}, ensure_ascii=False)}]
     failure = None
     try:
-        for step in range(3):
+        for step in range(max_steps):
             remaining = 100 - (time.monotonic() - started)
             if remaining < 5:
                 raise ValueError("本轮整理达到时间上限，已保存来源，可缩小问题后继续")
@@ -177,21 +203,47 @@ def run_agent(store, provider, *, course, question, purpose="ask"):
                 if not isinstance(raw, str) or len(raw) > 30000:
                     raise ValueError("响应超出约定长度")
                 data = json.loads(raw)
-                if data.get("action") == "search" and step < 2:
+                if data.get("action") == "read" and step < max_steps - 1:
+                    target = Read.model_validate(data).evidence_id
+                    if target not in allowed:
+                        raise ValueError("只能展开已读的课程来源")
+                    sid, index = target.rsplit(":", 1)
+                    found = []
+                    for n in range(max(0, int(index) - 1), int(index) + 2):
+                        try:
+                            item = store.evidence(sid + ":" + str(n))
+                            if item["course"] == course and item["active"] and (len(allowed) < 12 or item["id"] in allowed):
+                                allowed[item["id"]] = item
+                                found.append(item)
+                        except KeyError:
+                            pass
+                    trace.append({"tool": "read_surrounding_context", "evidence_id": target, "found": len(found)})
+                    messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": json.dumps({"source_data": found}, ensure_ascii=False)}]
+                    continue
+                if data.get("action") == "search" and step < max_steps - 1:
                     search = Search.model_validate(data)
                     if sum(len(m["content"]) for m in messages) > 28000:
                         raise ValueError("上下文达到上限，请根据已有证据完成")
                     messages += [{"role": "assistant", "content": raw}, {"role": "user", "content": json.dumps({"source_data": retrieve(search.query)}, ensure_ascii=False)}]
                     continue
                 value = Final.model_validate(data)
+                if purpose == "practice":
+                    if value.exercise is None:
+                        raise ValueError("练习请求需要一道完整题目")
+                    # A recall exercise must not reveal its answer in surrounding prose.
+                    value.claims, value.proposals, value.connections = [], [], []
+                    value.reply = "先不看资料，试着用自己的话回答。写下卡住的地方也可以。"
+                    value.next_question = ""
                 check_citations(value, allowed)
             except (ValidationError, ValueError, AttributeError) as exc:
                 failure = "模型的结构或引文校验未通过"
-                if step < 2:
+                if step < max_steps - 1:
                     messages.append({"role": "user", "content": "上次输出未通过结构/引文校验。请按约定 JSON 格式完成，quote 逐字引用已给来源，不补写日期。"})
                     continue
                 raise ValueError(failure) from exc
             result = value.model_dump(exclude={"action"})
+            if any(item.get("kind") == "image_reading" for item in allowed.values()):
+                result["uncertainties"].append("图片内容由模型识读，尚未人工核对。公式、数字和模糊文字请点开原图确认。")
             saved = []
             for proposal in result["proposals"]:
                 kind = proposal.pop("kind")

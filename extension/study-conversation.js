@@ -1,0 +1,200 @@
+(() => {
+  "use strict";
+  const $ = id => document.getElementById(id), A = AssistantClient, T = StudyTools;
+  const post = (path, body = {}) => A.api("/api/study" + path, {method: "POST", body, timeout: 155000});
+  const el = (tag, text, cls) => { const n = document.createElement(tag); if (text !== undefined) n.textContent = text; if (cls) n.className = cls; return n; };
+  let home = {turns: [], reviews: [], due: []}, pending = [], sending = false, uploading = 0, lastRender = "";
+  const conversation = "main";
+  const niceTime = value => new Date(value * 1000).toLocaleString("zh-CN", {month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false});
+  function notice(text) { $("notice").textContent = text; $("notice").hidden = !text; }
+  function button(text, handler, cls = "") {
+    const b = el("button", text, cls); b.type = "button";
+    b.addEventListener("click", async () => { b.disabled = true; try { await handler(); } catch (e) { notice(e.message); } finally { b.disabled = false; } }); return b;
+  }
+  function scrollLatest() { $("composer-anchor").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "end"}); }
+  function cite(parent, citations) { for (const [i, c] of (citations || []).entries()) { const b = button("依据 " + (i + 1) + " ↗", () => T.showEvidence(c.evidence_id), "cite"); b.title = c.quote; parent.append(b); } }
+  function menuClose() { $("tools-menu").close(); }
+  $("open-tools").addEventListener("click", () => $("tools-menu").showModal());
+  $("close-tools").addEventListener("click", menuClose);
+  document.querySelectorAll("[data-open]").forEach(b => b.addEventListener("click", () => { menuClose(); T.switchView(b.dataset.open); }));
+  $("close-review").addEventListener("click", () => $("review-dialog").close());
+  document.addEventListener("study-open-image", e => { $("evidence-dialog").close(); openImage(e.detail).catch(error => notice(error.message)); });
+  $("manage-reviews").addEventListener("click", () => { menuClose(); renderReviews(); $("review-dialog").showModal(); });
+  document.addEventListener("study-state", e => {
+    const s = e.detail;
+    if (!$("course").value && home.course) $("course").value = home.course;
+    $("model-note").textContent = s.provider.configured
+      ? `${s.provider.model}${s.provider.vision ? " · 支持图片" : " · 当前仅文字"} · 发送时使用相关摘录与所选图片，记录保存在本机`
+      : "模型尚未连接。可以先发送资料，或到设置中保存 Key。";
+    $("onboarding").textContent = s.sources.length ? `已有 ${s.sources.length} 份课堂与资料，直接接着聊就好。` : "还没有资料也没关系，先发一份，或从课堂记录开始。";
+  });
+  $("attach").addEventListener("click", () => $("attachment-picker").click());
+  $("start-attachment").addEventListener("click", () => $("attachment-picker").click());
+  $("attachment-picker").addEventListener("change", e => { addFiles([...e.target.files]); e.target.value = ""; });
+  $("question").addEventListener("paste", e => { const files = [...(e.clipboardData?.items || [])].filter(x => x.kind === "file").map(x => x.getAsFile()).filter(Boolean); if (files.length) { e.preventDefault(); addFiles(files); } });
+  const shell = document.querySelector(".conversation-shell");
+  shell.addEventListener("dragover", e => { if ([...e.dataTransfer.types].includes("Files")) { e.preventDefault(); shell.classList.add("dragging"); } });
+  shell.addEventListener("dragleave", e => { if (!shell.contains(e.relatedTarget)) shell.classList.remove("dragging"); });
+  shell.addEventListener("drop", e => { e.preventDefault(); shell.classList.remove("dragging"); addFiles([...e.dataTransfer.files]); });
+  function renderAttachments() {
+    const root = $("attachment-list"); root.replaceChildren();
+    for (const file of pending) root.append(button((file.image ? "▧ " : "▤ ") + file.name + "  ×", async () => { pending = pending.filter(f => f.id !== file.id); renderAttachments(); }, "attachment-chip"));
+    if (uploading) root.append(el("span", "正在把附件留在本机…", "fine"));
+    sessionStorage.setItem("study-draft-files", JSON.stringify(pending));
+    $("send").disabled = sending || uploading > 0;
+  }
+  async function addFiles(files) {
+    if (sending) { notice("这一轮正在阅读，等它回答后再补充附件。"); return; }
+    if (pending.length + files.length + uploading > 4) { notice("一次可以发 4 份资料，先选最相关的部分。"); return; }
+    uploading += files.length; renderAttachments();
+    for (const file of files) {
+      try {
+        if (file.size > 12 * 1024 * 1024) throw new Error("单份文件请控制在 12 MB 内。");
+        const content = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(r.result.split(",")[1]); r.onerror = reject; r.readAsDataURL(file); });
+        const item = await post("/attachments", {name: file.name, content});
+        if (!pending.some(p => p.id === item.id)) pending.push(item);
+      } catch (e) { notice(file.name + "：" + (e.message || "读取失败")); }
+      finally { --uploading; renderAttachments(); }
+    }
+    $("question").focus();
+  }
+  async function openImage(id) {
+    const {token} = await A.connection();
+    const response = await fetch(A.base + "/api/study/attachments/" + encodeURIComponent(id) + "/image", {headers: {Authorization: "Bearer " + token}});
+    if (!response.ok) throw new Error("原图暂时不可用");
+    const url = URL.createObjectURL(await response.blob());
+    $("evidence-title").textContent = "发送的原图"; $("evidence-location").textContent = "对照模型识读结果检查，尤其留意公式、数字与模糊文字。";
+    $("evidence-text").textContent = ""; const img = el("img"); img.src = url; img.alt = "课程原图"; img.className = "source-image"; $("evidence-text").append(img);
+    $("evidence-dialog").showModal(); $("evidence-dialog").addEventListener("close", () => URL.revokeObjectURL(url), {once: true});
+  }
+  async function refresh(force = false) {
+    const nearEnd = window.innerHeight + window.scrollY > document.body.scrollHeight - 260;
+    home = await A.api("/api/study/home?" + new URLSearchParams({conversation})); renderNudge();
+    if (!$("course").value && home.course && [...$("course").options].some(o => o.value === home.course)) $("course").value = home.course;
+    const signature = JSON.stringify(home.turns);
+    if (signature !== lastRender || force) { renderDialogue(); lastRender = signature; if (nearEnd && !force) scrollLatest(); }
+    $("pending-badge").textContent = home.pending_count || "";
+  }
+  function renderDialogue() {
+    const root = $("conversation"); root.replaceChildren(); $("welcome").hidden = home.turns.length > 0;
+    for (const turn of home.turns) {
+      const pair = el("article", undefined, "exchange"), user = el("div", undefined, "user-message");
+      if (turn.course) user.append(el("span", turn.course, "course-label")); user.append(el("p", turn.question));
+      for (const attachment of turn.attachments || []) user.append(attachment.image ? button("▧ " + attachment.name, () => openImage(attachment.id), "attachment-chip") : el("span", "▤ " + attachment.name, "attachment-chip"));
+      pair.append(user); const reply = el("div", undefined, "assistant-message"); reply.append(el("span", "SCUT · 一起往下想", "speaker"));
+      if (turn.status === "failed") reply.append(el("p", turn.error, "uncertainty"), button("接着试一次", () => send(turn.question, {course: turn.course, attachments: (turn.attachments || []).map(a => a.id), purpose: turn.purpose})));
+      else if (turn.status === "running") reply.append(el("p", "这条消息正在处理。页面关掉再回来，对话仍会留在这里。", "fine"));
+      else renderAnswer(reply, turn);
+      pair.append(reply); root.append(pair);
+    }
+  }
+  function renderAnswer(root, turn) {
+    const r = turn.result || {}; if (r.reply) root.append(el("p", r.reply));
+    if (r.status === "needs_course") {
+      const choices = el("div", undefined, "suggestions");
+      for (const name of r.choose_course || []) choices.append(button(name, () => { $("course").value = name; return send(turn.question, {course: name, attachments: turn.attachments.map(a => a.id)}); }));
+      const name = el("input"); name.placeholder = "也可以直接写课程名称"; name.maxLength = 160; name.setAttribute("aria-label", "新课程名称");
+      choices.append(name, button("接着看这门课", () => { if (!name.value.trim()) throw new Error("写下课程名就好"); return send(turn.question, {course: name.value.trim(), attachments: turn.attachments.map(a => a.id)}); })); root.append(choices); return;
+    }
+    if (r.input_images) root.append(el("p", "已结合截图识读 · 公式和数字可点上方原图核对", "image-reading-label"));
+    let extra;
+    for (const [index, claim] of (r.claims || []).entries()) { const row = el("div", undefined, "answer-point"); row.append(el("p", claim.text)); cite(row, claim.citations);
+      if (index > 1 && !["summary", "connect"].includes(turn.purpose)) { if (!extra) { extra = el("details", undefined, "more-explanation"); extra.append(el("summary", "继续展开讲讲")); root.append(extra); } extra.append(row); } else root.append(row);
+    }
+    for (const link of r.connections || []) { const row = el("div", undefined, "knowledge-link"); row.append(el("strong", link.concept_a + "  ↔  " + link.concept_b), el("p", link.relationship)); cite(row, link.citations); root.append(row); }
+    if (r.uncertainties?.length) { const details = el("details", undefined, "caveats"); if (!r.claims?.length && !r.exercise) details.open = true; details.append(el("summary", "还需要核对的地方 · " + r.uncertainties.length)); for (const text of r.uncertainties) details.append(el("p", text)); root.append(details); }
+    if (r.proposals?.length) { const p = r.proposals[0], card = el("div", undefined, "inline-step"); card.append(el("span", "从这段内容里找到一件事", "fine"), el("h3", p.title), el("p", p.detail), button("一起核对，再记下来", () => proposalSteps(card, p, turn.course))); root.append(card); }
+    if (r.exercise) renderExercise(root, r.exercise, turn);
+    if (r.next_question) root.append(el("p", r.next_question, "next-question"));
+    if ((r.claims || []).length || r.exercise) {
+      const actions = el("div", undefined, "suggestions");
+      actions.append(button("串联前后知识", () => send("结合刚才的内容和这门课的前后知识，解释它们为什么有关、在哪些条件下不同。请给出两处依据。", {course: turn.course, purpose: "connect"})),
+        button("深入总结一下", () => send("围绕刚才的主题深入总结：核心问题、推导关系、适用边界与容易混淆的地方。", {course: turn.course, purpose: "summary"})),
+        button("隔几天再问我", async () => { const review = await post("/reviews", {turn_id: turn.id, days: 1}); notice("记下了，先在 " + niceTime(review.due_at) + " 回访。复习后会根据反馈调整间隔。"); await refresh(); })); root.append(actions);
+      const trace = el("details", undefined, "trace"); trace.append(el("summary", "这次参考了什么"), el("p", `结合当前课程与最近对话，执行 ${(r.trace || []).filter(t => t.tool).length} 次来源读取。课程结论可回查上面的依据；图片识读单独标明。`)); root.append(trace);
+    }
+  }
+  function proposalSteps(card, proposal, course) {
+    const stage = el("div", undefined, "one-step"); card.replaceChildren(el("h3", proposal.title), stage);
+    const save = async (deadline, min, max) => { await post(`/proposals/${proposal.id}`, {status: "accepted", deadline, estimate_min: min, estimate_max: max}); stage.replaceChildren(el("p", "已记下。后续交流和安排会参考这条要求。")); await T.load(); await refresh(); };
+    if (proposal.proposal_kind !== "task") { stage.append(el("p", proposal.detail), button("记住这个要求", () => save(null, null, null))); return; }
+    let deadline = null;
+    const effort = () => {
+      stage.replaceChildren(el("p", "这件事大约需要多久？不确定时，可以先拆出今天能动手的一小步。"));
+      for (const [min, max] of [[20, 40], [60, 90], [120, 180]]) stage.append(button(`${min}–${max} 分钟`, () => save(deadline, min, max)));
+      stage.append(button("还不好估计，帮我拆小一点", () => send("这项任务是：“" + proposal.title + "”。请结合已知要求拆成最先能动手的一小步。不要替我确认截止日期或总耗时。", {course, purpose: "requirements"})));
+      const more = el("details"), input = el("input"); input.type = "number"; input.min = "5"; input.max = "12000"; input.setAttribute("aria-label", "自己估计的分钟数"); more.append(el("summary", "自己填写预计分钟"), input, button("按这个时间记下", () => { const n = Number(input.value); if (n < 5 || n > 6000) throw new Error("请填写 5–6000 分钟，也可以先拆小任务"); return save(deadline, n, n); })); stage.append(more);
+    };
+    const input = el("input"); input.type = "date"; input.setAttribute("aria-label", "已经确认的截止日期");
+    stage.append(el("p", proposal.due_text ? "老师提到的时间是“" + proposal.due_text + "”。你能确认对应哪一天吗？" : "先补最有用的一项：截止时间清楚吗？"), input,
+      button("就是这一天", () => { if (!input.value) throw new Error("先选一个已确认的日期，或选暂不确定"); deadline = input.value; effort(); }), button("暂不确定，先留空", async () => effort()));
+  }
+  function renderExercise(root, exercise, turn) {
+    const box = el("div", undefined, "exercise"), form = el("form"), answer = el("textarea"), rating = el("select"), result = el("div");
+    box.append(el("span", "先试着回忆，不急着看答案", "fine"), el("h3", exercise.question));
+    if (exercise.last_attempt) { box.append(el("p", "你当时的回答：" + exercise.last_attempt.answer), el("p", exercise.expected_answer)); cite(box, exercise.citations); root.append(box); return; }
+    answer.required = true; answer.maxLength = 3000; answer.rows = 3; answer.placeholder = "写下你的思路，卡在哪里也可以…"; answer.setAttribute("aria-label", "这道题的回答");
+    for (const [i, text] of ["完全卡住", "需要一点提示", "能大致解释", "能独立推导"].entries()) { const option = el("option", text); option.value = i + 1; rating.append(option); }
+    rating.setAttribute("aria-label", "这次回忆的感受"); const submit = el("button", "看看参考答案"); submit.type = "submit";
+    form.append(answer, rating, submit); form.addEventListener("submit", async e => { e.preventDefault(); submit.disabled = true; try {
+      const reply = await post(`/practice/${exercise.id}/attempt`, {answer: answer.value, rating: Number(rating.value)});
+      result.replaceChildren(el("p", reply.expected_answer)); cite(result, reply.citations);
+      if (turn.review_id) { const review = await post(`/reviews/${turn.review_id}`, {action: "complete", rating: Number(rating.value)}); result.append(el("p", "下次回访：" + niceTime(review.due_at), "fine")); await refresh(); }
+      else result.append(el("p", "用下方“隔几天再问我”安排这段内容的回访。", "fine"));
+    } catch (error) { notice(error.message); submit.disabled = false; } }); box.append(form, result); root.append(box);
+  }
+  function renderNudge() {
+    const root = $("gentle-next"); root.replaceChildren();
+    if (home.due.length) { const review = home.due[0]; root.append(el("span", "今天的小回访", "eyebrow"), el("strong", review.course + " · " + review.topic), button("花几分钟回忆", () => startReview(review)), button("明天再来", async () => { await post(`/reviews/${review.id}`, {action: "snooze"}); await refresh(); }, "quiet")); root.hidden = false; }
+    else if (home.task_count) { root.append(el("span", "先做一小段", "eyebrow"), el("p", `还有 ${home.task_count} 件已确认的任务，不必一次安排整周。`), button("帮我安排今天", today)); root.hidden = false; }
+    else if (home.reviews.length) { root.append(el("span", "记着呢", "eyebrow"), el("p", `下次回访 ${niceTime(home.reviews[0].due_at)} · ${home.reviews[0].course}`), button("调整节奏", () => { renderReviews(); $("review-dialog").showModal(); }, "quiet")); root.hidden = false; }
+    else root.hidden = true;
+  }
+  function startReview(review) { $("review-dialog").close(); $("course").value = review.course; return send("请围绕“" + review.topic + "”出一道检验理解的题，接着串联它的前置知识。先不要给答案。", {course: review.course, purpose: "practice", review_id: review.id}); }
+  function renderReviews() {
+    const root = $("review-list"); root.replaceChildren();
+    if (!home.reviews.length) root.append(el("p", "先聊一个想弄懂的主题。回答下面的“隔几天再问我”会把它放进复习节奏。"));
+    for (const r of home.reviews) { const card = el("div", undefined, "review-row"); card.append(el("span", r.course, "pill"), el("h3", r.topic), el("p", niceTime(r.due_at), "fine"), button("现在回忆", () => startReview(r)), button("推迟一天", async () => { await post(`/reviews/${r.id}`, {action: "snooze"}); await refresh(); renderReviews(); }), button("暂停这一项", async () => { await post(`/reviews/${r.id}`, {action: "pause"}); await refresh(); renderReviews(); })); root.append(card); }
+  }
+  async function today() {
+    await refresh(); if (home.due.length) return startReview(home.due[0]);
+    const tasks = (T.state()?.tasks || []).filter(t => t.status === "accepted" && !t.completed);
+    if (tasks.length) {
+      $("welcome").hidden = true; const card = el("div", undefined, "assistant-message inline-step"); $("conversation").append(card);
+      card.append(el("p", `有 ${tasks.length} 件已确认的任务。今天先留多少时间？`));
+      for (const minutes of [20, 40, 90]) card.append(button(minutes + " 分钟", async () => {
+        card.replaceChildren(el("p", "好，今天从几点开始？我会避开已确认的上课时段。"));
+        for (const hour of [19, 20]) { const later = new Date().getHours() >= hour ? 1 : 0; card.append(button((later ? "明晚 " : "今晚 ") + hour + ":00", async () => {
+          const start = new Date(Date.now() + later * 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+          const plan = await post("/plans", {start, days: 1, daily_minutes: minutes, start_hour: hour});
+          card.replaceChildren(el("h3", "今天先完成这一小段"));
+          for (const b of plan.blocks) card.append(el("p", `${b.start.slice(11,16)}–${b.end.slice(11,16)} · ${b.course} · ${b.title}`));
+          for (const r of plan.risks) card.append(el("p", r.text, "fine"));
+          if (plan.blocks.length) card.append(button("就按这份安排", async () => { await post(`/plans/${plan.id}/confirm`); notice("今天的安排已保存，详细计划和日历在“资料与安排”里。"); await T.load(); }));
+        })); }
+      })); scrollLatest();
+    }
+    else { $("question").value = "我想从最近的一节课开始，你能先帮我找出一个值得弄懂的关键问题吗？"; $("question").focus(); notice("先从关心的一门课开始。可以直接发送，也可以改成自己的话。"); }
+  }
+  document.querySelectorAll("[data-starter]").forEach(b => b.addEventListener("click", () => { if (b.dataset.intent === "today") today().catch(e => notice(e.message)); else { $("question").value = b.dataset.starter; $("question").focus(); } }));
+  async function send(text, options = {}) {
+    if (sending || uploading) return;
+    const question = text.trim() || (pending.length ? "帮我读懂这份资料，先提炼一个核心问题，再引导我往下学。" : ""); if (!question) return;
+    sending = true; $("thinking").hidden = false; $("send").disabled = true; notice("");
+    const ids = options.attachments || pending.map(f => f.id), course = options.course ?? $("course").value, original = $("question").value;
+    try {
+      const result = await post("/chat", {conversation, client_id: crypto.randomUUID(), question, course, attachments: ids, purpose: options.purpose || "auto", review_id: options.review_id || null});
+      if (result.course && !$("course").value) $("course").value = result.course;
+      if ($("question").value === original) $("question").value = "";
+      pending = []; renderAttachments(); sessionStorage.removeItem("study-draft-text");
+      await refresh(true); await T.load(); scrollLatest();
+    } catch (e) { notice(e.message + "；对话和附件保留，可继续补充或重试。"); await refresh().catch(() => {}); }
+    finally { sending = false; $("thinking").hidden = true; $("send").disabled = uploading > 0; }
+  }
+  $("ask-form").addEventListener("submit", e => { e.preventDefault(); send($("question").value); });
+  $("question").addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); send($("question").value); } });
+  $("question").addEventListener("input", () => { sessionStorage.setItem("study-draft-text", $("question").value); $("question").style.height = "auto"; $("question").style.height = Math.min(180, $("question").scrollHeight) + "px"; });
+  try { pending = JSON.parse(sessionStorage.getItem("study-draft-files") || "[]").slice(0, 4); $("question").value = sessionStorage.getItem("study-draft-text") || ""; } catch { pending = []; }
+  renderAttachments(); refresh().catch(e => notice(e.message));
+  setInterval(() => { if (!document.hidden && !sending && !document.querySelector("dialog[open]")) refresh().catch(() => {}); }, 30000);
+})();
