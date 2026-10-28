@@ -28,3 +28,8 @@ docs/
 !.env.example
 extension/local-connection.js
 mobile/android/.gradle/
+
+# Competition originals and personal study experiments stay local
+AgenticStuff/*.docx
+.test-tmp/
+study-providers.json

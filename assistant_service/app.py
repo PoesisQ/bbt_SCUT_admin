@@ -113,7 +113,10 @@ class AnalysisPreference(BaseModel):
     enabled: bool
 
 
-def create_app(settings=None, store=None, manager=None, *, run_workers=True):
+def create_app(settings=None, store=None, manager=None, *, run_workers=True, port=8765):
+    if not isinstance(port, int) or not 1024 <= port <= 65535:
+        raise ValueError("Invalid loopback port")
+    local_origin = rf"http://(127\.0\.0\.1|localhost):{port}"
     settings = settings or Settings()
     store = store or Store(settings.root)
     manager = manager or Manager(settings, store)
@@ -128,17 +131,19 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     app = FastAPI(title="SCUT Local Assistant", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.settings, app.state.store, app.state.manager = settings, store, manager
+    from .study_agent.api import router as study_router
+    app.include_router(study_router(settings, store))
     app.add_middleware(CORSMiddleware,
-                       allow_origin_regex=r"chrome-extension://[a-p]{32}|http://(127\.0\.0\.1|localhost):8765",
+                       allow_origin_regex=rf"chrome-extension://[a-p]{{32}}|{local_origin}",
                        allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
 
     @app.middleware("http")
     async def guard(request: Request, call_next):
         host = request.headers.get("host", "")
-        if host not in {"127.0.0.1:8765", "localhost:8765", "testserver"}:
+        if host not in {f"127.0.0.1:{port}", f"localhost:{port}", "testserver"}:
             return JSONResponse({"detail": "Invalid local host"}, status_code=403)
         origin = request.headers.get("origin")
-        if origin and not re.fullmatch(r"chrome-extension://[a-p]{32}|http://(127\.0\.0\.1|localhost):8765", origin):
+        if origin and not re.fullmatch(rf"chrome-extension://[a-p]{{32}}|{local_origin}", origin):
             return JSONResponse({"detail": "来源不受信任"}, status_code=403)
         if request.url.path.startswith("/api/") and request.method != "OPTIONS":
             bearer = secrets.compare_digest(request.headers.get("authorization", ""), "Bearer " + settings.data["token"])
@@ -518,7 +523,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True):
 
     @app.get("/{name}")
     def asset(name: str):
-        if name not in {"dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
+        if name not in {"study.html", "study.js", "study.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)
         response = FileResponse(ROOT / "extension" / name)
         if name.endswith(".html"):

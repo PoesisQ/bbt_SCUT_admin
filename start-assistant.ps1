@@ -45,7 +45,7 @@ try {
             if (-not (Test-Path -LiteralPath $scutPython -PathType Leaf)) {
                 if (-not (Get-Command uv -ErrorAction SilentlyContinue)) { throw 'First setup requires uv: https://docs.astral.sh/uv/.' }
                 Write-ScutLaunchLog 'Installing first-time dependencies.'
-                & uv sync --extra asr --python 3.12 --quiet
+                & uv sync --extra asr --extra study --python 3.12 --quiet
                 if ($LASTEXITCODE -ne 0) { throw 'Dependency installation failed.' }
             }
             $env:PYTHONIOENCODING = 'utf-8'

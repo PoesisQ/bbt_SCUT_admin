@@ -1,4 +1,4 @@
-importScripts("core.js","study-core.js","client.js","school-api.js");
+importScripts("core.js","study-core.js","client.js","school-api.js","visual-evidence.js");
 const A=AssistantClient;
 const ready=chrome.storage.local.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"});
 chrome.runtime.onInstalled?.addListener(({reason})=>{
@@ -235,6 +235,14 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
         return result;
       }
       case "START_LOCAL_SERVICE": return startLocalService();
+      case "COLLECT_VISUAL_EVIDENCE": {
+        let tab;try{tab=await chrome.tabs.get(message.tabId);}catch{throw new Error("课程页面已关闭，请重新选择");}
+        const context=await SchoolAPI.context(tab.id);
+        if(!context.subId)throw new Error("请选择具体课时");
+        const result=(await chrome.scripting.executeScript({target:{tabId:tab.id},func:collectScutVisuals,args:[tab.url]}))[0]?.result;
+        if(!result||result.error)throw new Error(result?.error||"无法读取截图索引");
+        return result;
+      }
       case "START_CAPTURE": return startCapture(message);
       case "STOP_CAPTURE": {
         const capture=await captureFor({tabId:message.tabId,sid:message.sid});

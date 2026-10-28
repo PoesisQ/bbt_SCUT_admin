@@ -4,6 +4,8 @@
 
 项目基于 [jbykkk/scut-courses-replay-extraction](https://github.com/jbykkk/scut-courses-replay-extraction) 开发，保留学校字幕下载功能，增加本地语音识别、课堂提醒和回放笔记。上游版权声明与 MIT 许可见 [LICENSE](LICENSE)。
 
+学习工作台的第一版在独立开发分支中，包含课件与课堂记录检索、带出处的核对提案、课表、学习计划和短练习。入口为本地服务的 `/study.html`。见 [项目设计](planning/STUDENT_AGENT.md)、[实现与使用](planning/STUDY_TECHNICAL.md) 和 [可行性验证](planning/FEASIBILITY.md)。
+
 适用于华南理工大学华园视频，支持校内入口和学校 WebVPN。主要使用环境是 Windows + Edge，扩展也兼容 Chrome。
 
 ## 安装
@@ -129,8 +131,8 @@ Windows 下，Key 使用当前账户的 DPAPI 加密，单独保存在：
 
 ## 开发
 
-    uv sync --extra asr
-    uv run --extra asr python -m assistant_service
+    uv sync --extra asr --extra study
+    uv run --extra asr --extra study python -m assistant_service
     uv run python scripts/check.py
     uv run python scripts/package_extension.py
 
