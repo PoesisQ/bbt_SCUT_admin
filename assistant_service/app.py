@@ -126,13 +126,17 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
     async def lifespan(app):
         if run_workers:
             manager.start()
+            study_api.operations.start()
         yield
+        study_api.operations.close()
         manager.close()
 
     app = FastAPI(title="SCUT Local Assistant", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
     app.state.settings, app.state.store, app.state.manager = settings, store, manager
     from .study_agent.api import router as study_router
-    app.include_router(study_router(settings, store))
+    study_api = study_router(settings, store)
+    app.state.study_operations = study_api.operations
+    app.include_router(study_api)
     app.add_middleware(CORSMiddleware,
                        allow_origin_regex=rf"chrome-extension://[a-p]{{32}}|{local_origin}",
                        allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
@@ -174,7 +178,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.10.8"}
+        return {"app": "scut-local-assistant", "version": "0.11.0"}
 
     @app.get("/api/health")
     def diagnostics():
@@ -523,7 +527,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
 
     @app.get("/{name}")
     def asset(name: str):
-        if name not in {"study.html", "study.js", "study.css", "study-tools.js", "study-conversation.js", "study-conversation.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
+        if name not in {"study.html", "study.js", "study.css", "study-tools.js", "study-actions.js", "study-conversation.js", "study-conversation.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)
         response = FileResponse(ROOT / "extension" / name)
         if name.endswith(".html"):

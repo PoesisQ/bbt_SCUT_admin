@@ -61,7 +61,8 @@
     if(currentPlan.status!=="accepted")root.append(button("确认这份计划",async()=>{currentPlan=await post(`/plans/${currentPlan.id}/confirm`);renderPlan();},"primary"));
     else root.append(button("下载日历文件 .ics",async()=>{const {token}=await A.connection();const response=await fetch(A.base+`/api/study/plans/${currentPlan.id}/calendar`,{headers:{Authorization:`Bearer ${token}`},signal:AbortSignal.timeout(15000)});if(!response.ok)throw new Error("日历导出失败，请检查本地连接");const url=URL.createObjectURL(await response.blob());const a=el("a");a.href=url;a.download="study-plan.ics";a.click();setTimeout(()=>URL.revokeObjectURL(url),30000);},"primary"));
   }
-  function renderSources(){const root=$("source-list");root.replaceChildren();if(!state.sources.length)empty(root,"还没有资料。支持 PDF、PPTX、DOCX、Markdown 和纯文本。");for(const s of state.sources){const row=el("div",undefined,"source-row");row.append(el("strong",s.title),el("span",`${s.course} · ${{material:"本地资料",asr:"本地转写",school_subtitle:"学校字幕"}[s.kind]||s.kind}`));root.append(row);}}
+  function renderSources(){if(window.StudyActions)StudyActions.sources().catch(e=>notify(e.message));}
+
   $("search-sources").addEventListener("click",()=>act($("search-sources"),async()=>{if(!course()||!$("question").value)throw new Error("先在“理解与核对”选择课程并输入问题");const r=await A.api("/api/study/search?"+new URLSearchParams({course:course(),q:$("question").value}));const root=$("source-list");root.replaceChildren();for(const item of r.items){const row=el("div",undefined,"source-row");row.append(el("div",item.text.slice(0,300)),button(`${item.title} · ${locationText(item)}`,()=>showEvidence(item.id)));root.append(row);}if(!r.items.length)empty(root,"没有匹配资料。");}));
   $("open-library").addEventListener("click",()=>{$("library-course").value=course();$("library-dialog").showModal();});
   $("close-library").addEventListener("click",()=>$("library-dialog").close());$("close-evidence").addEventListener("click",()=>$("evidence-dialog").close());

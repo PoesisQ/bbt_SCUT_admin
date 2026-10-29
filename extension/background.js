@@ -1,4 +1,4 @@
-importScripts("core.js","study-core.js","client.js","school-api.js","visual-evidence.js");
+importScripts("core.js","study-core.js","client.js","school-api.js","visual-evidence.js","study-bridge.js");
 const A=AssistantClient;
 const ready=chrome.storage.local.setAccessLevel({accessLevel:"TRUSTED_CONTEXTS"});
 chrome.runtime.onInstalled?.addListener(({reason})=>{
@@ -316,6 +316,10 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
 
 chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==="batch") void runBatch();});
 chrome.runtime.onStartup.addListener(()=>void runBatch());
+const pollStudyJobs=()=>ScutAgentBridge.poll({client:A,processLesson,busy:()=>batchRunning||startingBatch}).catch(()=>{});
+chrome.alarms.create("study-agent-jobs",{periodInMinutes:0.5});
+chrome.alarms.onAlarm.addListener(alarm=>{if(alarm.name==="study-agent-jobs")void pollStudyJobs();});
+chrome.runtime.onStartup.addListener(()=>void pollStudyJobs());
 chrome.tabs.onRemoved.addListener(async tabId=>{
   const capture=await captureFor({tabId});
   if(capture) await tellRecorder("STOP",{sid:capture.sid,tabId,warning:"课程标签页已关闭；正在保存剩余音频"}).catch(()=>{});

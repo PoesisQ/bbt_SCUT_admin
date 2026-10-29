@@ -17,6 +17,9 @@ from .storage import StudyStore, digest
 from .attachments import accept_attachment, attachment_path
 from .dialogue import converse, home
 from .reviews import create_review, update_review
+from .operations import OperationQueue, choose_operation
+from .knowledge import catalog, set_policy, remember_claim
+from .learning import answer_feedback
 from .timetable import expand_timetable, extract_timetable
 
 
@@ -120,6 +123,46 @@ class Plan(Strict):
 class Attempt(Strict):
     answer: str = Field(min_length=1, max_length=3000)
     rating: int = Field(ge=1, le=4)
+    review_id: str | None = Field(default=None, max_length=80)
+
+
+class SourcePolicy(Strict):
+    role: Literal["reference", "exercise", "slides", "transcript", "external", "other"]
+    trusted: bool = False
+    excluded: bool = False
+
+
+class Remember(Strict):
+    turn_id: str = Field(max_length=80)
+    claim_index: int = Field(ge=0, le=9)
+    status: Literal["pending", "confirmed", "dismissed"] = "pending"
+
+
+class BrowserLesson(Strict):
+    sub_id: str = Field(pattern=r"^\d{1,30}$")
+    title: str = Field(max_length=200)
+    status: str = Field(max_length=10)
+    start_at: float = Field(default=0, ge=0)
+
+
+class BrowserCatalogue(Strict):
+    course_id: str = Field(pattern=r"^\d{1,30}$")
+    course_title: str = Field(max_length=160)
+    page_url: str = Field(max_length=2000)
+    items: list[BrowserLesson] = Field(max_length=1000)
+    client: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")
+
+
+class BrowserResult(Strict):
+    sub_id: str = Field(pattern=r"^\d{1,30}$")
+    status: Literal["queued", "failed"]
+    sid: str | None = Field(default=None, pattern=r"^[a-f0-9]{32}$")
+    error: str = Field(default="", max_length=300)
+    client: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")
+
+
+class BrowserLease(Strict):
+    client: str = Field(pattern=r"^[a-zA-Z0-9_-]{1,80}$")
 
 
 class Visual(Strict):
@@ -172,6 +215,100 @@ def router(settings, classroom_store):
     study, provider = StudyStore(settings.root), Provider(settings)
     api = APIRouter(prefix="/api/study")
     model_gate = threading.BoundedSemaphore(1)
+    operations = OperationQueue(study, provider, settings, classroom_store, model_gate)
+    api.operations = operations
+
+    @api.get("/sources")
+    def sources():
+        return {"items": catalog(study), "knowledge": study.list("knowledge")}
+
+    @api.post("/sources/{sid}")
+    def source_settings(sid: str, body: SourcePolicy):
+        return set_policy(study, sid, **body.model_dump())
+
+    @api.post("/knowledge")
+    def knowledge(body: Remember):
+        turn = study.get(body.turn_id, "turn")
+        claims = turn.get("result", {}).get("claims", [])
+        if body.claim_index >= len(claims):
+            raise ValueError("该回答没有这条结论")
+        claim = claims[body.claim_index]
+        if body.status == "confirmed" and turn.get("result", {}).get("support_status") != "checked":
+            raise ValueError("这条回答尚未完成出处检查，请重新核对后再保存为确认知识")
+        return remember_claim(study, course=turn["course"], text=claim["text"], citations=claim["citations"], status=body.status)
+
+    @api.post("/knowledge/{mid}/dismiss")
+    def dismiss_memory(mid: str):
+        item = study.get(mid, "knowledge")
+        return study.save("knowledge", {**item, "status": "dismissed"}, mid)
+
+    @api.get("/operations")
+    def operation_list():
+        operations.refresh_browser_jobs()
+        return study.list("operation")[:50]
+
+    @api.post("/operations/{jid}/cancel")
+    def cancel_operation(jid: str):
+        return operations.cancel(jid)
+
+    @api.post("/operations/{jid}/retry")
+    def retry_operation(jid: str):
+        job = study.get(jid, "operation")
+        if job["status"] not in {"failed", "completed"}:
+            raise ValueError("任务仍在执行，或已取消")
+        items = []
+        for item in job["items"]:
+            if item["status"] == "failed":
+                item = {**item, "status": "pending"}
+                if item.get("sid"):
+                    session = classroom_store.get(item["sid"])
+                    item["action"] = "analyze" if session.get("segments") and session.get("status") != "failed" else "retry"
+            items.append(item)
+        value = operations.update(job, items=items, status="waiting_browser" if job["tool"] == "process_missing_lessons" else "queued", message="准备重试未完成部分")
+        operations.wake.set()
+        return value
+
+    @api.get("/exports/{jid}/{fmt}")
+    def export_pack(jid: str, fmt: str):
+        job = study.get(jid, "operation")
+        entry = next((f for f in job.get("files", []) if f["format"] == fmt), None)
+        if not entry or entry["file"] != jid + "." + fmt or fmt not in {"pdf", "md"}:
+            raise HTTPException(404, "此导出尚未完成")
+        path = settings.root / "study-exports" / entry["file"]
+        return FileResponse(path, filename=entry["name"], media_type="application/pdf" if fmt == "pdf" else "text/markdown; charset=utf-8")
+
+    @api.get("/browser/work")
+    def browser_work():
+        return [{k: j[k] for k in ("id", "course", "status", "items")} for j in study.list("operation")
+            if j["tool"] == "process_missing_lessons" and j["status"] in {"waiting_browser", "running"}]
+
+    def require_lease(jid, client):
+        job = study.get(jid, "operation")
+        if job.get("browser_client") != client or job.get("lease_until", 0) < time.time():
+            raise HTTPException(409, "浏览器任务租约过期，请重新领取")
+        return job
+
+    @api.post("/browser/{jid}/claim")
+    def browser_claim(jid: str, body: BrowserLease):
+        with operations.lock:
+            job = study.get(jid, "operation")
+            if job["tool"] != "process_missing_lessons" or job["status"] not in {"waiting_browser", "running"}:
+                raise HTTPException(409, "任务已经结束")
+            if job.get("browser_client") not in {None, body.client} and job.get("lease_until", 0) > time.time():
+                raise HTTPException(409, "另一浏览器正在领取此任务")
+            return operations.update(job, browser_client=body.client, lease_until=time.time()+90)
+
+    @api.post("/browser/{jid}/catalogue")
+    def browser_catalogue(jid: str, body: BrowserCatalogue):
+        with operations.lock:
+            require_lease(jid, body.client)
+            return operations.select_lessons(jid, **body.model_dump(exclude={"client"}))
+
+    @api.post("/browser/{jid}/result")
+    def browser_result(jid: str, body: BrowserResult):
+        with operations.lock:
+            require_lease(jid, body.client)
+            return operations.item_result(jid, **body.model_dump(exclude={"client"}))
 
     @api.get("/home")
     def dialogue_home(conversation: str = "main"):
@@ -180,10 +317,13 @@ def router(settings, classroom_store):
     @api.post("/chat")
     def chat(body: Chat):
         if not model_gate.acquire(blocking=False):
+            # Explicit operations only enqueue; they need not wait for a long export.
+            if body.purpose == "auto" and choose_operation(None, body.question, body.course):
+                return converse(study, provider, settings.root, operations=operations, **body.model_dump())
             raise HTTPException(409, "正在接着读上一条消息，稍后再发；内容会留在输入框中")
         try:
             ingest.sync_sessions(study, classroom_store.records())
-            return converse(study, provider, settings.root, **body.model_dump())
+            return converse(study, provider, settings.root, operations=operations, **body.model_dump())
         finally:
             model_gate.release()
 
@@ -335,10 +475,20 @@ def router(settings, classroom_store):
     @api.post("/practice/{pid}/attempt")
     def practice(pid: str, body: Attempt):
         item = study.get(pid, "practice")
+        review = study.get(body.review_id, "review") if body.review_id else None
+        if review and review["course"] != item["course"]:
+            raise ValueError("这次作答与复习课程不匹配")
+        feedback = {"status": "unavailable", "summary": "模型正忙，先保存本次思路与自评。", "missing": []}
+        if model_gate.acquire(blocking=False):
+            try: feedback = answer_feedback(study, provider, item, body.answer)
+            finally: model_gate.release()
         days = review_interval(item["attempts"], body.rating)
-        item["attempts"].append({**body.model_dump(), "at": time.time()})
+        item["attempts"].append({**body.model_dump(), "at": time.time(), "feedback": feedback})
         item.update(due_at=time.time() + days * 86400, assessment="学生自评，尚非客观掌握度")
-        return study.save("practice", item, pid)
+        result = study.save("practice", item, pid)
+        if review:
+            result["review"] = update_review(study, review["id"], action="complete", rating=body.rating, feedback=feedback)
+        return result
 
     @api.post("/visuals")
     def visuals(body: Visuals):

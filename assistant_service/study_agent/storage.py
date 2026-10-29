@@ -89,7 +89,8 @@ class StudyStore:
             row = db.execute("SELECT e.data,s.active FROM evidence e JOIN sources s ON s.id=e.source_id WHERE e.id=?", (eid,)).fetchone()
         if not row:
             raise KeyError("来源片段不存在")
-        return {**json.loads(row[0]), "active": bool(row[1])}
+        from .knowledge import decorate_evidence
+        return decorate_evidence(self, {**json.loads(row[0]), "active": bool(row[1])})
 
     def search(self, query, course, limit=8):
         wanted = terms(query + " " + " ".join(value for key, value in ALIASES.items() if key in query))
@@ -98,14 +99,19 @@ class StudyStore:
         with self.connect() as db:
             rows = db.execute("SELECT e.data FROM evidence e JOIN sources s ON s.id=e.source_id WHERE s.active=1 AND e.course=?", (course,)).fetchall()
         scored = []
+        from .knowledge import decorate_evidence
+        excluded = {(p["course"], p["origin"]) for p in self.list("source_policy") if p.get("excluded")}
+        hidden = {s["id"] for s in self.sources(course) if (s["course"], s["origin"]) in excluded}
         for row in rows:
             value = json.loads(row[0])
+            if value["source_id"] in hidden:
+                continue
             found = terms(value["text"] + " " + value["title"])
             score = len(wanted & found) / max(1, len(wanted))
             if score:
                 scored.append((score, value))
         scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        return [item for _, item in scored[:limit]]
+        return [decorate_evidence(self, item) for _, item in scored[:limit]]
 
     def save(self, kind, value, eid=None):
         eid = eid or digest([kind, value, time.time_ns()])[:32]
