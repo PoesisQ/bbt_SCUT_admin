@@ -87,9 +87,11 @@ class OperationTests(unittest.TestCase):
         def response(request):
             captured.append(json.loads(request.content))
             return httpx.Response(200,json={"choices":[{"message":{"tool_calls":[{"function":{"name":"set_review_preferences","arguments":'{"daily_minutes":20,"preferred_hour":19}'}}]}}]})
-        client_type=httpx.Client
-        with patch.object(provider,"config",return_value={"model":"test-model","base_url":"https://api.example.test","key":"test-only-secret","disable_thinking":True}), patch("assistant_service.study_agent.reasoner.httpx.Client",side_effect=lambda **kwargs:client_type(transport=httpx.MockTransport(response))):
+        provider.close()
+        provider.client=httpx.Client(transport=httpx.MockTransport(response))
+        with patch.object(provider,"config",return_value={"model":"test-model","base_url":"https://api.example.test","key":"test-only-secret","disable_thinking":True}):
             plan=provider.choose_tool("每天复习20分钟", "操作系统",tool_schemas())
+        provider.close()
         self.assertEqual(validate_operation(plan,"每天复习20分钟")[1]["daily_minutes"],20)
         self.assertNotIn("test-only-secret",str(captured))
         self.assertEqual(captured[0]["tool_choice"],"auto")

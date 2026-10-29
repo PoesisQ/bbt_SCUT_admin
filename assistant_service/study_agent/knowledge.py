@@ -42,14 +42,14 @@ def set_policy(store, sid, *, role, excluded=False, trusted=False):
         "role": role, "excluded": excluded, "trusted": trusted}, policy_id(source))
 
 
-def decorate_evidence(store, item):
-    with store.connect() as db:
-        row = db.execute("SELECT data FROM sources WHERE id=?", (item["source_id"],)).fetchone()
-    if not row:
-        return item
-    import json
-    source = json.loads(row[0])
-    policy = source_policy(store, source)
+def decorate_evidence(store, item, *, source=None, policies=None):
+    if source is None:
+        with store.connect() as db:
+            row = db.execute("SELECT data FROM sources WHERE id=?", (item["source_id"],)).fetchone()
+        if not row:return item
+        import json
+        source = json.loads(row[0])
+    policy = source_policy(store, source) if policies is None else policies.get((source["course"],source["origin"]), {"excluded":False,"trusted":False})
     return {**item, "policy": policy, "origin": source["origin"], "source_meta": source.get("meta", {}),
             "reliability": "transcription_unchecked" if item["kind"] in NOISY else
                            "selected_reference" if policy["trusted"] else "original_unchecked"}
@@ -88,17 +88,19 @@ def remember_claim(store, *, course, text, citations, status="pending", supersed
 def relevant_memory(store, course, question, limit=5):
     wanted = terms(question)
     values = []
-    superseded = {m.get("supersedes") for m in store.list("knowledge") if m.get("status") == "confirmed"}
-    for memory in store.list("knowledge"):
+    memories = store.list("knowledge")
+    superseded = {m.get("supersedes") for m in memories if m.get("status") == "confirmed"}
+    for memory in memories:
         if memory.get("course") != course or memory.get("status") != "confirmed" or memory["id"] in superseded:
             continue
+        score = len(wanted & terms(memory["text"]))
+        if not score:continue
         try:
             evidence = [store.evidence(c["evidence_id"]) for c in memory["citations"]]
             if not all(e["active"] and not e.get("policy", {}).get("excluded") for e in evidence):
                 continue
         except KeyError:
             continue
-        score = len(wanted & terms(memory["text"]))
         if score:
             values.append((score, {"text": memory["text"], "citations": memory["citations"]}))
     return [m for _, m in sorted(values, key=lambda x: -x[0])[:limit]]

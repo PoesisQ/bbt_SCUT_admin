@@ -9,6 +9,8 @@ from pathlib import Path
 
 from .ingest import FORMATS, extract
 from .storage import digest
+from .prompt_catalog import read as read_prompt
+from ..telemetry import phase
 
 MAX_FILE = 12 * 1024 * 1024
 IMAGE_FORMATS = {".png", ".jpg", ".jpeg", ".webp"}
@@ -68,7 +70,8 @@ def prepare_attachments(store, provider, root, ids, course, question):
         for item in images:
             data = attachment_path(root, item).read_bytes()
             parts.append({"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(data).decode()}})
-        raw = provider.complete([{"role": "system", "content": "你是课程图片读取工具。只返回约定 JSON；诚实标记不清晰之处。"}, {"role": "user", "content": parts}], 35)
+        with phase("vision", 4000):
+            raw = provider.complete([{"role": "system", "content": read_prompt("vision-v1")}, {"role": "user", "content": parts}], 35)
         try:
             values = json.loads(raw)["readings"]
             if len(values) != len(images):

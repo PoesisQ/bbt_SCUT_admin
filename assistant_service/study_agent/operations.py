@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+import sqlite3
 import base64
 import threading
 import time
@@ -16,6 +17,7 @@ from .knowledge import align_class, read_aligned_visuals
 from .reasoner import Strict, run_agent
 from .references import read_reference, search_reference
 from .storage import digest
+from ..telemetry import current, emit, traced, RuntimeLog
 from .attachments import IMAGE_FORMATS, MAX_FILE, accept_attachment, prepare_attachments
 
 
@@ -82,6 +84,11 @@ def choose_operation(provider, question, course):
         return {"tool": "lookup_reference", "arguments": {"url": url[0].rstrip("。")}}
     if re.search(r"结合|对照|拼|还原|匹配", question) and re.search(r"题目|课堂|字幕|截图|音频", question):
         return {"tool": "reconstruct_class", "arguments": {"topic": question[:500]}}
+    preference = re.fullmatch(r"\s*(?:请|帮我|以后|设为|改成|调整为|我想)?\s*每天\s*复习\s*(\d{1,2})\s*分钟(?:[，,、\s]+(晚上|下午|上午|早上)?\s*(\d{1,2})\s*(?:点|:00))?[。！!\s]*", question)
+    if preference:
+        hour = int(preference[3]) if preference[3] else 19
+        if preference[2] in {"晚上", "下午"} and hour < 12:hour += 12
+        return {"tool":"set_review_preferences", "arguments":{"daily_minutes":int(preference[1]),"preferred_hour":hour}}
     # Native tool calling is only exposed to a fresh user request, not source text.
     if hasattr(provider, "choose_tool") and re.search(r"导出|生成|批量|查证|外部|百科|每天.*复习|复习.*分钟|读取|资料文件夹", question):
         return provider.choose_tool(question, course, tool_schemas())
@@ -134,9 +141,11 @@ class OperationQueue:
                 if existing: return existing
             if name == "read_local_path": explicit_local_path(args["path"])
             job = self.store.save("operation", {"tool": name, "arguments": args, "course": course, "question": question,
-                "turn_id": turn_id, "status": "waiting_browser" if name == "process_missing_lessons" else "queued",
+                "turn_id": turn_id, "parent_trace":current().id if current() else None, "status": "waiting_browser" if name == "process_missing_lessons" else "queued",
                 "message": "等待同一门课的学校播放页和扩展响应" if name == "process_missing_lessons" else "已排队",
                 "items": [], "created_at": time.time(), "trace": [{"tool": name, "stage": "validated", "at": time.time()}]}, jid)
+            if name=="process_missing_lessons":
+                job=self.update(job, message=job["message"], trace_id=None)
         self.wake.set()
         return job
 
@@ -144,12 +153,35 @@ class OperationQueue:
         with self.lock:
             current = self.store.get(job["id"], "operation")
             if current["status"] == "cancelled": return current
+            if all(current.get(k)==v for k,v in changes.items()) and not (job["tool"]=="process_missing_lessons" and not current.get("trace_id")):
+                return current
+            data={k:v for k,v in changes.items() if k in {"status","message","files","trace_id"}}
+            if job["tool"]=="process_missing_lessons":
+                try:
+                    log=RuntimeLog(self.settings.root);rid=current.get("trace_id")
+                    if not rid or log.state(rid)!="running":
+                        rid=log.begin("operation",job["question"],job["course"],job.get("parent_trace"))
+                        log.emit(rid,"tool.start","等待浏览器接收任务",{"tool":job["tool"],"arguments":job["arguments"]})
+                        changes["trace_id"]=rid
+                    if "items" in changes:
+                        old={i.get("sub_id"):i for i in current.get("items",[])}
+                        changed=[i for i in changes["items"] if i!=old.get(i.get("sub_id"))]
+                        data["changed_items"]=[{k:i[k] for k in ("sub_id","title","status","action","error") if k in i} for i in changed]
+                    log.emit(rid,"tool.progress",changes.get("message","课时状态更新"),data)
+                    end=changes.get("status")
+                    if end in {"completed","failed","cancelled"}:
+                        log.emit(rid,"tool.finish","批次结束",{"status":end})
+                        log.finish(rid,"failed" if end=="completed" and any(i.get("status")=="failed" for i in changes.get("items",[])) else end)
+                except (sqlite3.Error,OSError):
+                    changes.pop("trace_id",None)
+            else:
+                emit("tool.progress", changes.get("message", "更新进度"), data)
             return self.store.save("operation", {**current, **changes}, job["id"])
 
     def cancel(self, jid):
         with self.lock:
             job = self.store.get(jid, "operation")
-            return self.store.save("operation", {**job, "status": "cancelled", "message": "已取消后续步骤；已提交的字幕任务保留，可在课堂记录中管理"}, jid)
+            return self.update(job, status="cancelled", message="已取消后续步骤；已提交的字幕任务保留，可在课堂记录中管理")
 
     def start(self):
         for job in self.store.list("operation"):
@@ -170,8 +202,10 @@ class OperationQueue:
             self.refresh_browser_jobs()
             self.wake.wait(3); self.wake.clear()
 
+    @traced("operation")
     def execute(self, job):
-        job = self.update(job, status="running", message="处理中")
+        emit("tool.start", "执行课程操作", {"tool":job["tool"],"arguments":job["arguments"]})
+        job = self.update(job, status="running", message="处理中", trace_id=current().id if current() else None)
         if job["status"] == "cancelled": return job
         try:
             args, course = job["arguments"], job["course"]

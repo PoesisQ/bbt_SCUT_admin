@@ -33,3 +33,8 @@ mobile/android/.gradle/
 AgenticStuff/*.docx
 .test-tmp/
 study-providers.json
+
+# Local execution traces and study databases may contain course text
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm

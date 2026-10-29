@@ -86,6 +86,8 @@
       if (turn.status === "failed") reply.append(el("p", turn.error, "uncertainty"), button("接着试一次", () => send(turn.question, {course: turn.course, attachments: (turn.attachments || []).map(a => a.id), purpose: turn.purpose})));
       else if (turn.status === "running") reply.append(el("p", "这条消息正在处理。页面关掉再回来，对话仍会留在这里。", "fine"));
       else renderAnswer(reply, turn);
+      const traceId=turn.trace_id||turn.result?.trace_id;
+      if(traceId)reply.append(button("查看执行过程 ↗",()=>document.dispatchEvent(new CustomEvent("study-runtime",{detail:traceId})),"runtime-inspect-link"));
       pair.append(reply); root.append(pair);
     }
   }

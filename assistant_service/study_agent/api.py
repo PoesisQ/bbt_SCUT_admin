@@ -217,6 +217,30 @@ def router(settings, classroom_store):
     model_gate = threading.BoundedSemaphore(1)
     operations = OperationQueue(study, provider, settings, classroom_store, model_gate)
     api.operations = operations
+    api.provider = provider
+    from ..telemetry import RuntimeLog
+    runtime = RuntimeLog(settings.root)
+    api.runtime = runtime
+
+    @api.get("/runtime")
+    def runtime_list(limit: int = 40):
+        return {"items":runtime.list(max(1,min(limit,100))), "retention_days":30, "max_runs":300}
+
+    @api.get("/runtime/catalog")
+    def runtime_catalog():
+        from .prompt_catalog import catalog as prompts, PURPOSES
+        from .operations import tool_schemas
+        return {"prompts":prompts(), "purpose_rules":PURPOSES, "tools":tool_schemas(),
+            "retrieval_tools":[{"name":"search_sources", "arguments":{"query":"本课关键词"}, "scope":"只检索当前课程，排除停用资料"},
+                {"name":"read_surrounding_context", "arguments":{"evidence_id":"已读片段 ID"}, "scope":"读取同一资料的前后段落"}],
+            "budgets":{"source_characters":24000,"history_characters":2000,"max_model_steps":3,
+                       "support_cache_days":7,"support_cache_entries":256},
+            "storage":{"trace":".local/agent-runtime.sqlite3","memory":".local/study-agent.sqlite3"}}
+
+    @api.get("/runtime/{rid}")
+    def runtime_detail(rid: str, after: int = 0):
+        return runtime.detail(rid, max(0, after))
+
 
     @api.get("/sources")
     def sources():

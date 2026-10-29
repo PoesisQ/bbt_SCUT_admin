@@ -18,6 +18,7 @@
     for(const link of job.links||[]){const row=el("div",undefined,"alignment-card");row.append(el("span","关联候选 · 尚未确认","fine"),el("p",link.reason));sourceLink(row,link.speech.id,`${link.speech.title} · ${clock(link.speech.locator.start)}–${clock(link.speech.locator.end)}`);sourceLink(row,link.material.id,`${link.material.title} · 第 ${link.material.locator.page||link.material.locator.slide||1} 页`);for(const v of link.visuals||[]){const a=el("a",`课堂截图 ${clock(v.seconds)} ↗`);a.href=v.url;a.target="_blank";a.rel="noreferrer noopener";row.append(a);}root.append(row);}
     for(const c of job.result?.claims||[]){root.append(el("p",c.text));for(const ref of c.citations)sourceLink(root,ref.evidence_id,"查看依据");if(c.verification)root.append(el("small",c.verification.label));}
     for(const text of job.result?.uncertainties||[])root.append(el("p",text,"uncertainty"));
+    if(job.trace_id)root.append(button("查看任务执行过程 ↗",()=>document.dispatchEvent(new CustomEvent("study-runtime",{detail:job.trace_id}))));
     if(active)root.append(button("取消未完成步骤",()=>post(`/operations/${job.id}/cancel`)));
     if(job.status==="failed"||job.items?.some(i=>i.status==="failed"))root.append(button("重试失败部分",()=>post(`/operations/${job.id}/retry`)));
   }

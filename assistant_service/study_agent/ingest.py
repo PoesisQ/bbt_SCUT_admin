@@ -103,6 +103,8 @@ def extract(path: Path):
 def import_file(store, root, relative, course):
     path = safe_file(root, root / relative)
     fingerprint = hashlib.sha256(path.read_bytes()).hexdigest()
+    existing = store.duplicate(course, fingerprint)
+    if existing:return existing
     return store.source(origin=str(path), course=course, title=path.name, kind="material",
                         fingerprint=fingerprint, chunks=extract(path))
 
@@ -117,6 +119,10 @@ def sync_sessions(study, sessions):
         active_origins.add(origin)
         segments = session.get("segments", [])
         if not segments:
+            continue
+        fingerprint = digest([segments, session.get("time_basis"), session.get("title")])
+        if study.duplicate(session.get("course_title") or "未分类课程", fingerprint):
+            duplicates += 1
             continue
         chunks, buffer, size = [], [], 0
 
@@ -134,7 +140,6 @@ def sync_sessions(study, sessions):
             buffer.append({**segment, "text": str(segment.get("text", ""))[:4000]})
             size += len(buffer[-1]["text"])
         flush()
-        fingerprint = digest([segments, session.get("time_basis"), session.get("title")])
         result = study.source(origin=origin, course=session.get("course_title") or "未分类课程",
                               title=session.get("title", "课堂字幕"), kind="school_subtitle" if session.get("mode") == "subtitle" else "asr",
                               fingerprint=fingerprint, chunks=chunks,

@@ -9,6 +9,7 @@ from .reasoner import run_agent
 from .storage import digest
 from .learning import review_candidates, preferences
 from .operations import choose_operation
+from ..telemetry import traced, current, emit
 
 
 def public_turn(turn, store=None):
@@ -41,6 +42,7 @@ def home(store, conversation="main", now=None):
         "pending_count": sum(p.get("status") == "pending" for p in store.list("proposal"))}
 
 
+@traced("chat")
 def converse(store, provider, root, *, conversation, client_id, course, question, purpose="auto", attachments=None, review_id=None, operations=None):
     attachments = attachments or []
     request = digest([conversation, course, question, purpose, attachments, review_id])
@@ -50,6 +52,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
         if old["request"] != request:
             raise ValueError("同一条消息的内容已改变，请重新发送")
         if old["status"] == "ready":
+            emit("cache.hit", "消息已处理，返回原有回答", {"cache":"request_id", "original_trace":old.get("trace_id")})
             return public_turn(old)
     except KeyError:
         old = None
@@ -75,7 +78,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
         course = next((t["course"] for t in reversed(history) if t.get("course")), "")
     selected_attachments = [store.get(aid, "attachment") for aid in attachments]
     turn = {"conversation": conversation, "request": request, "course": course, "question": question,
-        "purpose": purpose, "review_id": review_id, "status": "running", "created_at": old["created_at"] if old else time.time(),
+        "purpose": purpose, "review_id": review_id, "status": "running", "trace_id":current().id if current() else None, "created_at": old["created_at"] if old else time.time(),
         "attachments": [{k: a[k] for k in ("id", "name", "image")} for a in selected_attachments]}
     store.save("turn", turn, tid)
     if not course:
@@ -86,6 +89,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
         if operations and purpose == "auto":
             plan = choose_operation(provider, question, course)
             if plan:
+                emit("tool.selected", "选择课程操作", {"tool":plan["tool"], "arguments":plan.get("arguments",{})})
                 job = operations.submit(plan, course=course, question=question, turn_id=tid)
                 result = {"reply": job["message"], "operation_id": job["id"], "claims": [], "proposals": [], "uncertainties": [], "status": "operation"}
                 return public_turn(store.save("turn", {**turn, "status": "ready", "result": result}, tid))
@@ -119,6 +123,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
         result = run_agent(store, provider, course=course, question=question, purpose=purpose,
                            history=previous, focus=focus, max_steps=2 if images else 3)
         result["input_images"] = images
+        result.pop("evidence", None)
         return public_turn(store.save("turn", {**turn, "purpose": purpose, "status": "ready", "result": result}, tid))
     except Exception as exc:
         store.save("turn", {**turn, "status": "failed", "error": str(exc)[:240]}, tid)

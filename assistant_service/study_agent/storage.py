@@ -46,8 +46,32 @@ class StudyStore:
                 CREATE TABLE IF NOT EXISTS entities(
                     id TEXT PRIMARY KEY, kind TEXT NOT NULL, data TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS runs(id TEXT PRIMARY KEY, data TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS entities_kind ON entities(kind);
+                CREATE INDEX IF NOT EXISTS evidence_course ON evidence(course);
                 PRAGMA user_version=1;
             """)
+            # Tokenise Chinese bigrams once at ingestion instead of every question.
+            try:
+                db.execute("CREATE VIRTUAL TABLE IF NOT EXISTS evidence_search USING fts5(evidence_id UNINDEXED, tokens)")
+                pending = db.execute("SELECT e.id,e.text,e.data FROM evidence e WHERE NOT EXISTS (SELECT 1 FROM evidence_search f WHERE f.rowid=e.rowid)").fetchall()
+                for row in pending:
+                    value = json.loads(row["data"])
+                    self._index(db, row["id"], row["text"], value["title"])
+                self.indexed = True
+            except sqlite3.OperationalError:
+                self.indexed = False
+
+    @staticmethod
+    def _index(db, eid, text, title):
+        row = db.execute("SELECT rowid FROM evidence WHERE id=?", (eid,)).fetchone()
+        db.execute("DELETE FROM evidence_search WHERE rowid=?", (row[0],))
+        db.execute("INSERT INTO evidence_search(rowid,evidence_id,tokens) VALUES(?,?,?)",
+                   (row[0], eid, " ".join(sorted(terms(text+" "+title)))))
+
+    def duplicate(self, course, fingerprint):
+        with self.connect() as db:
+            row=db.execute("SELECT id FROM sources WHERE course=? AND fingerprint=? AND active=1",(course,fingerprint)).fetchone()
+        return {"id":row[0],"duplicate":True,"chunks":0} if row else None
 
     @contextmanager
     def connect(self):
@@ -75,14 +99,16 @@ class StudyStore:
             for n, chunk in enumerate(chunks):
                 eid = f"{sid}:{n}"
                 item = {**chunk, "id": eid, "source_id": sid, "course": course, "title": title, "kind": kind}
-                db.execute("INSERT OR REPLACE INTO evidence VALUES(?,?,?,?,?)",
+                db.execute("INSERT INTO evidence VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET source_id=excluded.source_id,course=excluded.course,text=excluded.text,data=excluded.data",
                            (eid, sid, course, item["text"], json.dumps(item, ensure_ascii=False)))
+                if self.indexed:
+                    self._index(db, eid, item["text"], title)
         return {"id": sid, "duplicate": False, "chunks": len(chunks)}
 
     def sources(self, course=""):
         with self.connect() as db:
-            rows = db.execute("SELECT data FROM sources WHERE active=1 ORDER BY rowid DESC").fetchall()
-        return [v for row in rows if (v := json.loads(row[0])) and (not course or v["course"] == course)]
+            rows = db.execute("SELECT data FROM sources WHERE active=1" + (" AND course=?" if course else "") + " ORDER BY rowid DESC", (course,) if course else ()).fetchall()
+        return [json.loads(row[0]) for row in rows]
 
     def evidence(self, eid):
         with self.connect() as db:
@@ -96,12 +122,19 @@ class StudyStore:
         wanted = terms(query + " " + " ".join(value for key, value in ALIASES.items() if key in query))
         if not wanted:
             return []
-        with self.connect() as db:
-            rows = db.execute("SELECT e.data FROM evidence e JOIN sources s ON s.id=e.source_id WHERE s.active=1 AND e.course=?", (course,)).fetchall()
         scored = []
         from .knowledge import decorate_evidence
-        excluded = {(p["course"], p["origin"]) for p in self.list("source_policy") if p.get("excluded")}
-        hidden = {s["id"] for s in self.sources(course) if (s["course"], s["origin"]) in excluded}
+        policies = {(p["course"],p["origin"]):p for p in self.list("source_policy")}
+        sources = {s["id"]:s for s in self.sources(course)}
+        hidden = {s["id"] for s in sources.values() if policies.get((s["course"],s["origin"]),{}).get("excluded")}
+        with self.connect() as db:
+            if self.indexed:
+                match=" OR ".join('"'+word.replace('"','""')+'"' for word in sorted(wanted)[:160])
+                excluding=" AND e.source_id NOT IN ("+",".join("?" for _ in hidden)+")" if hidden else ""
+                rows=db.execute("SELECT e.data FROM evidence_search f JOIN evidence e ON e.rowid=f.rowid JOIN sources s ON s.id=e.source_id WHERE evidence_search MATCH ? AND s.active=1 AND e.course=?"+excluding+" ORDER BY rank LIMIT ?",
+                    (match, course, *sorted(hidden), max(96, limit*4))).fetchall()
+            else:
+                rows=db.execute("SELECT e.data FROM evidence e JOIN sources s ON s.id=e.source_id WHERE s.active=1 AND e.course=?",(course,)).fetchall()
         for row in rows:
             value = json.loads(row[0])
             if value["source_id"] in hidden:
@@ -111,7 +144,7 @@ class StudyStore:
             if score:
                 scored.append((score, value))
         scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        return [decorate_evidence(self, item) for _, item in scored[:limit]]
+        return [decorate_evidence(self, item, source=sources[item["source_id"]], policies=policies) for _, item in scored[:limit]]
 
     def save(self, kind, value, eid=None):
         eid = eid or digest([kind, value, time.time_ns()])[:32]
@@ -132,6 +165,8 @@ class StudyStore:
             return [json.loads(row[0]) for row in db.execute("SELECT data FROM entities WHERE kind=? ORDER BY rowid DESC", (kind,))]
 
     def save_run(self, value):
+        value = {**value, "evidence_ids":[e["id"] for e in value.get("evidence",[])]}
+        value.pop("evidence",None)  # immutable evidence is already stored by ID
         rid = digest([value, time.time_ns()])[:32]
         with self.connect() as db:
             db.execute("INSERT INTO runs VALUES(?,?)", (rid, json.dumps(value, ensure_ascii=False)))

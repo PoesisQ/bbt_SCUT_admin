@@ -13,6 +13,7 @@ from .settings import atomic_json
 from .asr import Transcriber, validate_wav, repetitive_segments
 from .media import Downloader, decode, split_wav
 from .mobile import MobileNotifier
+from .telemetry import traced, emit
 
 
 def append_segments(existing: list[dict], fresh: list[dict], key: str, offset: float, duration: float) -> list[dict]:
@@ -64,6 +65,8 @@ class Manager:
     def close(self):
         self.shutdown.set()
         self.mobile.close()
+        if hasattr(self.analyzer, "close"):
+            self.analyzer.close()
         if hasattr(self.asr, "close"):
             self.asr.close()
 
@@ -110,6 +113,7 @@ class Manager:
                         changes["notes_retry_at"] = time.time() + 60 * 5 ** min(max(attempt - 1, 0), 2)
                 self.store.update(sid, **changes)
 
+    @traced("classroom_job")
     def run(self, job):
         sid, payload, kind = job["session_id"], job["payload"], job["kind"]
         if kind in {"chunk", "repair"}:
@@ -187,6 +191,8 @@ class Manager:
                 result = completed.get(str(index))
                 if result is None:
                     result = self.analyzer.analyze(pack, summary=kind == "summary")
+                else:
+                    emit("cache.hit", "复用已完成的课堂段落", {"cache":"lecture_checkpoint","section":index+1})
                 if self.settings.data["deepseek_model"] != model:
                     raise ValueError("分析模型已切换，请点击继续生成笔记，使用新模型整理本课")
                 if kind == "summary":

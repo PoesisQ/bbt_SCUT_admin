@@ -16,7 +16,7 @@ async function startLocalService(){
     if(!result?.ok)throw new Error(result?.error||"本地启动器没有返回状态");
     if(typeof result.token!=="string"||!result.token)throw new Error("本地启动器未返回连接信息");
     await A.setConnection(result.token);
-    await A.api("/api/health",{timeout:10000});
+    await A.api("/api/health?brief=true",{timeout:10000});
     return {connected:true,version:result.version};
   })();
   try{return await launchingService;}finally{launchingService=null;}
@@ -99,7 +99,7 @@ async function startCapture(message) {
     }}))[0]?.result;
     if(!state||state.paused) throw new Error("请先在学校播放器开始播放声音，再开启实时字幕");
     if(metadata.time_basis==="video"&&state.rate!==1) throw new Error("边播边识别请使用 1 倍速；批量回放转写不受播放速度影响");
-    await A.api("/api/health");
+    await A.api("/api/health?brief=true");
     await offscreen();
     let streamId;
     try{streamId=await chrome.tabCapture.getMediaStreamId({targetTabId:message.tabId});}
