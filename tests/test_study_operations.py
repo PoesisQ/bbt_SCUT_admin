@@ -42,7 +42,11 @@ class FakeProvider:
 
 class OperationTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory(); self.root=Path(self.temp.name)
+        # Windows TEMP lives under AppData, which real course-file tools reject.
+        # Keep actual material fixtures in the workspace instead of weakening that boundary.
+        fixtures=Path(__file__).resolve().parents[1]/".test-tmp"
+        fixtures.mkdir(exist_ok=True)
+        self.temp=tempfile.TemporaryDirectory(dir=fixtures); self.root=Path(self.temp.name)
         self.store=StudyStore(self.root)
         self.e=self.source()
         self.provider=FakeProvider(self.e)
