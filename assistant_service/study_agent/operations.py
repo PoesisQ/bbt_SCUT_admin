@@ -16,6 +16,7 @@ from .exports import save_pack
 from .knowledge import align_class, read_aligned_visuals
 from .reasoner import Strict, run_agent
 from .references import read_reference, search_reference
+from .research import search_public_references, read_public_reference, prepare_evidence_comparison, validate_concept
 from .storage import digest
 from ..telemetry import current, emit, traced, RuntimeLog
 from .attachments import IMAGE_FORMATS, MAX_FILE, accept_attachment, prepare_attachments
@@ -44,6 +45,11 @@ class Reconstruct(Strict):
     topic: str = Field(min_length=2, max_length=500)
 
 
+class Research(Strict):
+    concept: str = Field(min_length=2, max_length=100)
+    discipline: Literal["general", "life_sciences"] = "general"
+
+
 class ReviewPreference(Strict):
     daily_minutes: int = Field(ge=5, le=60)
     preferred_hour: int = Field(default=19, ge=8, le=21)
@@ -54,6 +60,7 @@ REGISTRY = {
     "process_missing_lessons": (Batch, "将当前课尚未处理的回放交给浏览器批量获取；已经有字幕但缺笔记时仅补分析"),
     "export_study_pack": (Export, "生成有来源的复习资料或练习题，导出 PDF / Markdown；参考答案放在最后"),
     "lookup_reference": (Reference, "用简短公开概念检索外部百科，或读取学生明确提供的公开高校/教材链接，作为未核验参考"),
+    "research_topic": (Research, "检索公开教材和论文，读取最多两份有正文/摘要的资料，与本课原文对照，标明证据不足、条件差异和冲突。只发送简短概念词，不发送课堂原话。"),
     "reconstruct_class": (Reconstruct, "查找同课字幕时间段、本地题目页与屏幕截图的关联候选，再结合原文解释"),
     "set_review_preferences": (ReviewPreference, "按学生明确给出的每天复习分钟数、时间修改复习预算")}
 
@@ -82,6 +89,9 @@ def choose_operation(provider, question, course):
     url = re.search(r"https://[^\s<>\"，；]+", question)
     if url and re.search(r"读|参考|核对|查证|教材", question):
         return {"tool": "lookup_reference", "arguments": {"url": url[0].rstrip("。")}}
+    if hasattr(provider, "choose_tool") and re.search(r"文献|论文|外部.*(?:核对|查证|比较)|(?:核对|查证).*外部|公开教材", question):
+        selected = provider.choose_tool(question, course, [t for t in tool_schemas() if t["function"]["name"] == "research_topic"])
+        if selected: return selected
     if re.search(r"结合|对照|拼|还原|匹配", question) and re.search(r"题目|课堂|字幕|截图|音频", question):
         return {"tool": "reconstruct_class", "arguments": {"topic": question[:500]}}
     preference = re.fullmatch(r"\s*(?:请|帮我|以后|设为|改成|调整为|我想)?\s*每天\s*复习\s*(\d{1,2})\s*分钟(?:[，,、\s]+(晚上|下午|上午|早上)?\s*(\d{1,2})\s*(?:点|:00))?[。！!\s]*", question)
@@ -104,6 +114,9 @@ def validate_operation(plan, question):
         raise ValueError("路径必须由你在本条消息中给出")
     if name == "lookup_reference" and value["url"] and value["url"] not in question:
         raise ValueError("外部链接必须由你提供，不能由模型猜测")
+    if name == "research_topic":
+        if not re.search(r"文献|论文|外部|公开教材|查证", question): raise ValueError("外部检索需要你明确提出查证或文献请求")
+        value["concept"] = validate_concept(value["concept"])
     if name == "process_missing_lessons" and not (re.search(r"全部|所有|每[一]?节|未处理|未整理|没处理|还没", question) and re.search(r"处理|转译|转写|整理|下载", question)):
         raise ValueError("批量处理需要你明确指定尚未处理的课时")
     if name == "set_review_preferences" and str(value["daily_minutes"]) not in question:
@@ -243,6 +256,40 @@ class OperationQueue:
             if job["tool"] == "lookup_reference":
                 result = [read_reference(self.store, course, args["url"])] if args["url"] else search_reference(self.store, course, args["concept"])
                 return self.update(job, status="completed", references=result, message=f"找到 {len(result)} 份外部参考，尚未独立核验；可继续问与课堂说法的差异")
+            if job["tool"] == "research_topic":
+                found = search_public_references(self.store, **args)
+                refs, warnings = [], list(found["warnings"])
+                candidates = [i for i in found["items"] if i["coverage"] != "metadata_only" and i["publication_status"] not in {"update_notice", "retraction_notice"}][:2]
+                for item in candidates:
+                    if self.stop.is_set(): return self.update(job, status="queued")
+                    if self.store.get(job["id"], "operation")["status"] == "cancelled": return
+                    try:
+                        refs.append(read_public_reference(self.store, course, item["id"]))
+                    except (ValueError, OSError, KeyError) as exc:
+                        warnings.append(str(exc)[:180])
+                    self.update(job, message=f"已读取 {len(refs)} 份外部资料，正在核对适用条件")
+                if not refs:
+                    return self.update(job, status="completed", references=found["items"], warnings=warnings,
+                        message="只找到候选或暂时无法读取正文；没有据此生成确定结论。可提供原论文或教材文件。")
+                local = [e for e in self.store.search(job["question"], course, 24) if e["kind"] != "external"][:3]
+                if not local:
+                    warnings.append("没有检索到对应的课堂或本地资料原文；以下只能解释外部资料，不能判断老师是否讲错。")
+                external = []
+                for ref in refs:
+                    allowed_ids = set(ref.get("evidence_ids", []))
+                    ranked = [e for e in self.store.search(args["concept"], course, 80) if e["id"] in allowed_ids][:2]
+                    external.extend(ranked or [self.store.evidence(eid) for eid in ref.get("evidence_ids", [])[:1]])
+                focus = (local + external)[:6]
+                comparison = prepare_evidence_comparison(self.store, course, job["question"], [e["id"] for e in focus]) if len(focus) >= 2 else {}
+                with self.gate:
+                    if self.store.get(job["id"], "operation")["status"] == "cancelled": return
+                    result = run_agent(self.store, self.provider, course=course, question=job["question"] +
+                        "\n对照课堂和外部资料，先说明是否讲的是同一条件下的同一主张。逐项说明一致、条件不同、冲突或证据不足；只读摘要不得假装读过全文。不要把学术文献当作课程要求。",
+                        purpose="verify", focus=focus, max_steps=2)
+                result.setdefault("uncertainties", []).extend(warnings + comparison.get("notices", [])[2:])
+                return self.update(job, status="completed", references=refs, result=result, comparison=comparison,
+                    message=("已对照课堂与外部资料；结论附出处，分歧保留，尚未写入已确认知识。" if local else
+                        "已整理外部参考，缺少对应课堂原文，暂不能完成课堂核对。"))
             if job["tool"] == "set_review_preferences":
                 self.store.save("review_preferences", args, "review-preferences")
                 return self.update(job, status="completed", message=f"每天复习预算 {args['daily_minutes']} 分钟，优先安排在 {args['preferred_hour']}:00")

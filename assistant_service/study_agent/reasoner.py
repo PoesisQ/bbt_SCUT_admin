@@ -231,7 +231,8 @@ def check_citations(value, allowed):
         if len({c.evidence_id for c in connection.citations}) < 2:
             raise ValueError("知识关联需要两处不同证据，不能重复同一引文")
     for proposal in value.proposals:
-        if proposal.kind == "correction" and len({allowed[c.evidence_id]["source_id"] for c in proposal.citations}) < 2:
+        from .research import source_family
+        if proposal.kind == "correction" and len({source_family(allowed[c.evidence_id]) for c in proposal.citations}) < 2:
             raise ValueError("转写纠正必须有不同来源支持；单一来源只能标记不确定")
         # A deadline is preserved as an exact quote, never parsed into a guessed date.
         if proposal.due_text and not any(proposal.due_text in allowed[c.evidence_id]["text"] for c in proposal.citations):

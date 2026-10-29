@@ -58,7 +58,8 @@ def decorate_evidence(store, item, *, source=None, policies=None):
 def annotate_claims(store, result, allowed):
     for claim in [*result.get("claims", []), *result.get("connections", [])]:
         evidence = [allowed[c["evidence_id"]] for c in claim["citations"]]
-        independent = {e["source_id"] for e in evidence}
+        from .research import source_family
+        independent = {source_family(e) for e in evidence}
         reference = any(e.get("policy", {}).get("trusted") and e["kind"] not in NOISY for e in evidence)
         # These labels describe provenance, NOT a proof that the proposition is true.
         level = "needs_check" if all(e["kind"] in NOISY for e in evidence) else "reference_backed" if reference else "source_backed"

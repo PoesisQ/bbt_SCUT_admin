@@ -30,7 +30,7 @@ class PlainText(HTMLParser):
 
 
 FIXED_REFERENCE_HOSTS = {"openstax.org", "www.ncbi.nlm.nih.gov", "www.nist.gov", "docs.python.org",
-                         "en.wikipedia.org", "zh.wikipedia.org", "pages.cs.wisc.edu"}
+                         "en.wikipedia.org", "zh.wikipedia.org", "pages.cs.wisc.edu", "api.crossref.org", "www.ebi.ac.uk"}
 
 
 def reference_proxy(url, root=None):
@@ -76,18 +76,20 @@ def read_reference(store, course, url, client=None):
     proxy = reference_proxy(url, store.path.parent) if client is None else None
     public_reference_url(url, proxy=proxy)
     own = client is None
-    client = client or httpx.Client(timeout=18, follow_redirects=False, trust_env=True, proxy=proxy,
+    client = client or httpx.Client(timeout=18, follow_redirects=False, trust_env=False, proxy=proxy,
         headers={"User-Agent": "SCUTStudy/0.11 (local study reference reader)"})
     try:
         with client.stream("GET", url) as response:
             response.raise_for_status()
             if response.is_redirect:
                 raise ValueError("资料链接发生跳转，请使用最终公开地址")
-            buf = bytearray()
+            buf = bytearray(); started = time.monotonic()
             for data in response.iter_bytes():
                 buf.extend(data)
                 if len(buf) > 6 * 1024 * 1024:
                     raise ValueError("外部资料超过 6 MB，请下载后从本地导入")
+                if time.monotonic() - started > 20:
+                    raise ValueError("读取资料超时，请稍后重试")
             ctype = response.headers.get("content-type", "")
         if "pdf" in ctype or urlparse(url).path.endswith(".pdf"):
             import io

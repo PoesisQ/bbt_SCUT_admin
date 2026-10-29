@@ -1,6 +1,6 @@
 (() => {
   "use strict";
-  const A = AssistantClient, labels = {read_local_path:"读取资料",process_missing_lessons:"处理课程回放",export_study_pack:"生成学习资料",lookup_reference:"查找外部参考",reconstruct_class:"对照课堂与题目",set_review_preferences:"调整复习时间"};
+  const A = AssistantClient, labels = {read_local_path:"读取资料",process_missing_lessons:"处理课程回放",export_study_pack:"生成学习资料",lookup_reference:"查找外部参考",research_topic:"查文献，对照课堂",reconstruct_class:"对照课堂与题目",set_review_preferences:"调整复习时间"};
   const el = (tag,text,cls) => {const n=document.createElement(tag); if(text!==undefined)n.textContent=text; if(cls)n.className=cls; return n;};
   const post = (path,body={}) => A.api("/api/study"+path,{method:"POST",body});
   const button = (text,action) => {const b=el("button",text);b.type="button";b.addEventListener("click",async()=>{b.disabled=true;try{await action();}catch(e){const note=document.getElementById("notice");note.hidden=false;note.textContent=e.message;}finally{b.disabled=false;}});return b;};
@@ -17,7 +17,8 @@
     }
     if(job.items?.length){const list=el("details");list.append(el("summary",`课时 / 文件明细 · ${job.items.length}`));for(const item of job.items){const row=el("div",undefined,"operation-item");row.append(el("strong",item.title||item.file),el("span",({ready:"已读取",pending:"待提交",queued:"后台处理中",done:"已完成",skipped:"已有结果，跳过",failed:"失败"})[item.status]||item.status));if(item.error)row.append(el("p",item.error));list.append(row);}root.append(list);}
     for(const file of job.files||[])root.append(button("下载 "+file.format.toUpperCase(),()=>download(job,file)));
-    for(const ref of job.references||[]){const a=el("a",ref.title+" ↗");a.href=ref.url;a.target="_blank";a.rel="noreferrer noopener";root.append(a);}
+    for(const ref of job.references||[]){const row=el("div",undefined,"operation-item"),a=el("a",ref.title+" ↗");try{const url=new URL(ref.url);if(url.protocol!=="https:"||url.username||url.password)continue;a.href=url.href;}catch{continue;}a.target="_blank";a.rel="noreferrer noopener";row.append(a);if(ref.coverage)row.append(el("small",({metadata_only:"仅书目信息",abstract_only:"仅摘要",bounded_full_text:"已读取部分正文",full_text_available:"正文待读"})[ref.coverage]||"待核对"));root.append(row);}
+    for(const warning of job.warnings||[])root.append(el("p",warning,"uncertainty"));
     for(const link of job.links||[]){const row=el("div",undefined,"alignment-card");row.append(el("span","关联候选 · 尚未确认","fine"),el("p",link.reason));sourceLink(row,link.speech.id,`${link.speech.title} · ${clock(link.speech.locator.start)}–${clock(link.speech.locator.end)}`);sourceLink(row,link.material.id,`${link.material.title} · 第 ${link.material.locator.page||link.material.locator.slide||1} 页`);for(const v of link.visuals||[]){const a=el("a",`课堂截图 ${clock(v.seconds)} ↗`);a.href=v.url;a.target="_blank";a.rel="noreferrer noopener";row.append(a);}root.append(row);}
     for(const c of job.result?.claims||[]){root.append(el("p",c.text));for(const ref of c.citations)sourceLink(root,ref.evidence_id,"查看依据");if(c.verification)root.append(el("small",c.verification.label));}
     for(const text of job.result?.uncertainties||[])root.append(el("p",text,"uncertainty"));

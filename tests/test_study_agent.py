@@ -144,7 +144,9 @@ class StudyTests(unittest.TestCase):
         serve(self.study, io.StringIO("\n".join(json.dumps(m) for m in messages)), output)
         responses = [json.loads(line) for line in output.getvalue().splitlines()]
         self.assertEqual(len(responses), 4)
-        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in responses[1]["result"]["tools"]))
+        tools = responses[1]["result"]["tools"]
+        self.assertTrue(all(t["annotations"]["readOnlyHint"] for t in tools if t["name"] not in {"search_public_references", "read_public_reference"}))
+        self.assertTrue(all(not t["annotations"]["destructiveHint"] for t in tools))
         self.assertIn(e["id"], responses[2]["result"]["content"][0]["text"])
         self.assertEqual(responses[3]["error"]["code"], -32602)
 

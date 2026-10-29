@@ -7,7 +7,9 @@ def evidence_payload(item):
     return {k:item[k] for k in ("id","title","kind","text") if k in item} | {
         "locator":{k:v for k,v in item.get("locator",{}).items() if k in {"page","slide","section","start","end","time_basis"}},
         "reliability":item.get("reliability","original_unchecked"),
-        "selected_reference":bool(item.get("policy",{}).get("trusted"))}
+        "selected_reference":bool(item.get("policy",{}).get("trusted")),
+        "external_provenance":{k:v for k,v in item.get("source_meta",{}).items()
+            if k in {"coverage","doi","provider","publication_status","family","retrieved_at"}}}
 
 def pack_evidence(items, budget=13000):
     result=[];seen=set();used=0;dropped=[]
