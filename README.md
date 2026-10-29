@@ -1,139 +1,228 @@
-# SCUT 课堂助手
+# SCUT 学习助手
 
-<img src="extension/brand.png" width="80" alt="SCUT 课堂助手图标">
+把百步梯的课堂记录和电脑里的课件放到一起。上课时记字幕、收提醒，下课后整理笔记；复习时能找到老师的原话，也能按自己的时间安排先学什么。
 
-项目基于 [jbykkk/scut-courses-replay-extraction](https://github.com/jbykkk/scut-courses-replay-extraction) 开发，保留学校字幕下载功能，增加本地语音识别、课堂提醒和回放笔记。上游版权声明与 MIT 许可见 [LICENSE](LICENSE)。
+项目基于 [jbykkk/scut-courses-replay-extraction](https://github.com/jbykkk/scut-courses-replay-extraction) 开发，保留了原有的学校字幕下载功能。
 
-适用于华南理工大学华园视频，支持校内入口和学校 WebVPN。主要使用环境是 Windows + Edge，扩展也兼容 Chrome。
+**[下载 Windows 安装包][setup]** · [安装与日常使用][start] · [WorkBuddy 接入][workbuddy] · [反馈问题][issues]
 
-## 安装
+主要使用环境：**Windows 10/11 x64 + Edge**，浏览器扩展也支持 Chrome。学校课程需要有权访问百步梯的账号；只读本地资料时不需要登录学校网站。
 
-需要安装 [uv](https://docs.astral.sh/uv/)，并准备 Faster Whisper 模型与 FFmpeg。程序会查找当前用户 PotPlayer 目录中的引擎和模型；也可以在设置中指定路径。不会自动下载语音模型。
+## 先选版本
 
-1. 下载本项目，解压后双击 **启动课堂助手.cmd**。首次启动会安装 Python 依赖，随后打开本地页面。
-2. Edge 地址栏输入 **edge://extensions**，打开开发者模式，选择“加载解压缩的扩展”，选中项目里的 **extension** 文件夹。Chrome 使用 **chrome://extensions**。
-3. 加载扩展后再运行一次启动器，登记浏览器直接启动通道。以后打开扩展会自动启动并连接本地服务。如果使用另一份扩展目录，可在“设置 → 连接与安装”手动配对。
-4. 需要智能分析时，在“设置 → 智能分析”填入自己的 DeepSeek API Key 并保存。只用字幕时可以不配置。
+| 版本 | 适合谁 | 包含什么 |
+| --- | --- | --- |
+| [0.13.0 Windows 预览包][release] | 想先安装使用 | 桌面入口、实时字幕、回放整理、课程笔记、本地资料问答、复习与导出 |
+| [最新开发分支][dev] | 想用刚完成的功能 | 上述功能，以及跨课时问答、今日复习清单、WorkBuddy 接入、公开资料核对 |
 
-这是本地扩展，尚未上架商店。启动器会为当前 Windows 用户登记 Edge / Chrome 本地通信通道，只允许当前项目中已经安装的扩展调用。以后打开助手，服务未运行时会自动按需启动、等待就绪并恢复连接口令。也可以点击 **启动并连接本地服务**，设置页提供相同入口。浏览器不需要反复询问是否打开 CMD 或外部协议。[Edge 本地通信说明](https://learn.microsoft.com/en-us/microsoft-edge/extensions/developer-guide/native-messaging)
+**0.13.0 安装包尚不包含开发版新增功能。** 当前 GitHub 默认分支也未合入这些改动；使用新功能请按下方“从源码运行”切换到开发分支。[开发进度见 PR #1][pr]。
 
-这不是开机自启，不会添加计划任务或启动项。启动器只接受固定的启动操作；重复点击会复用同一个服务。移动项目目录后，运行一次新目录中的启动器即可更新入口。
+![学习助手主界面][study-image]
 
-课时信息首次读取失败会自动重试，读取目录不会阻塞实时字幕按钮。按钮不可用时，下方会说明是在连接服务、读取本课状态，还是补传本课音频；其他课的音频缓存不会阻止新开一路字幕。DeepSeek Key 与模型预加载状态不决定能否开始采集声音。
+截图来自实际程序，使用演示数据，不包含个人课程、账号或密钥。主界面为 0.13.0，下面的跨课时问答和今日清单截图来自开发版。
 
-## 上课时
+## 安装后怎么用
 
-登录学校网站，打开具体课时并开始播放。页面右侧会自动展开助手入口；点击“打开课堂控制”或工具栏图标打开面板，点击 **开始实时字幕** 后才开始采集当前标签页的声音。
+1. 下载 **[SCUT-Study-Setup-0.13.0.exe][setup]**，选择“安装并打开”。安装包自带 Python 和依赖，不需要先安装开发工具。
+2. 以后双击桌面或开始菜单里的 **SCUT 学习助手**。本地服务会按需启动，不设置开机自启，也不需要找 CMD 文件。
+3. 先添加一份课件，或者输入要处理的课程。不必一次填完课表、考试日期和所有要求。
+4. 需要模型解释、生成笔记时，再到设置里保存自己的 API Key。想使用实时字幕，再配置语音模型和 FFmpeg。
 
-- **课堂实况**：连续阅读字幕，向上翻看前文，查看提问、点名、作业等提醒。实时分析会带上最近的前文；下课后还会通读完整字幕，整理最终事项。
-- **网页字幕**：在播放器上显示，可展开上下文或收起。
-- **结束录音并保存**：下课时使用。剩余字幕和笔记会在后台继续处理。
+安装包目前是未签名的预发布版本。[下载页][release]也提供带运行环境的 ZIP 和 SHA-256 校验文件；ZIP 解压后打开 `SCUT学习助手.exe` 即可。GitHub 自动生成的 `Source code.zip` 是源码包。
 
-关闭面板或课堂实况窗口，录音仍会继续。再次点击工具栏图标，或学校页面右侧的“课堂助手”，即可回来；不用重新开始录音。关闭学校播放页、浏览器或电脑休眠会中断采集。
+### 需要学校课程时
 
-可以同时打开多节直播课：逐个切到课程标签页，点击工具栏图标并开始字幕。扩展角标会显示正在录制的数量；面板中的课程下拉框用于切换查看和单独结束某一路。直播进行时也可以从课程笔记批量导入回放；多节回放会并行下载并自动排队转写。为避免同一块显卡重复加载多个大模型，Whisper 只常驻一份并优先处理直播音频，回放不会阻塞实时提醒。
+在学习窗口说：**“处理操作系统尚未处理的每一节回放。”**
 
-自动打开可以在面板的“使用帮助与显示偏好”里关闭。自动展开仅发生在页内，不会自动打开工具栏窗口；手动收起后，在本次页面内切换课程也不会再次展开。后台标签页不会抢焦点。实时字幕仍有数秒延迟，边播边识别回放时请用 1 倍速。
+如果尚未连接学校，任务会等待。点击任务中的“登录百步梯，继续处理”，在学校页面完成登录，再打开对应课程。第一次读取学校课程，需要在 Edge 或 Chrome 中加载项目的 `extension` 文件夹；连接面板会显示目录和步骤。[详细安装步骤][start]
 
-若首次开始字幕时提示需要手动打开，点击工具栏上的助手图标后再开始。浏览器要求用户主动调用扩展才能授予标签页捕获权限，自动弹出不能替代这一步。[浏览器说明](https://developer.chrome.com/docs/extensions/reference/api/tabCapture)
+扩展能够读取课程后，任务会继续：有学校字幕就导入，没有字幕就提取音轨、本地转写，再自动生成笔记。已有结果会跳过。保持对应学校页面打开，供扩展读取课时目录和视频地址。
 
-## 整理回放
+<details>
+<summary>查看学校连接与任务等待界面</summary>
 
-单节回放：打开这节课的学校页面，点击助手的 **整理本节回放**。
+![学校连接和登录入口][school-image]
 
-整门课：进入 **课程笔记 → 导入课程回放**，选择已登录的课程标签页，读取目录并勾选课时。导入期间保持学校标签页打开。
+![等待学校连接的课程任务][task-image]
 
-重新打开同一门课的学校播放页后，导入会自动关联新页面。切换到另一门课不会改变已勾选课时所属的课程；若原课程没有打开，会提示先打开原课程再重试。
+</details>
 
-有学校字幕时直接导入；没有字幕时提取回放音轨，在本机转写。字幕保存后会自动生成笔记，无需逐节点击。直播中、尚未开始或回放未就绪的课时不能批量导入。
+### 上课时
 
-点击后先显示“正在读取学校数据”，成功创建本地课时后才显示“已交给本地处理”。导入期间或失败的课时会保留在 **待整理** 中，关掉面板、刷新或开始下一批都不会丢失。失败卡片显示原因，点击“返回本节课重新导入”后可重试；学校尚无语音数据时会自动改用回放转写，无需等学校补字幕。
+在课程播放页点击浏览器工具栏里的扩展图标，再点 **开始实时字幕**。这次点击用于授予当前标签页的声音捕获权限，打开页面本身不会自动录音。
 
-## 找笔记和复习
+可以同时记录多节课，也可以在直播转写时整理回放。课堂实况显示连续字幕和上下文，重要事项会提醒并保存。下课时点 **结束录音并保存**，剩余笔记在后台继续处理。
 
-“课程笔记”按课程归档，每份记录显示本课内容，日期作为辅助信息。
+**关闭控制面板或学习窗口不会结束录音；关闭学校播放页会中断该页的声音采集。** 想回来查看，重新点扩展图标或桌面入口即可。
 
-一节课只显示一张卡片，日期和节次单独加粗。打开后在 **本课字幕** 中切换学校字幕、本地转写和局部录音，每份结果都有时间范围。普通重复导入会复用已有结果；只有明确勾选重新识别时才创建新版本。
+## 下课后和复习时
 
-同来源、同时间基准的结果按范围去重：完整覆盖局部的保留完整版本，范围相同时保留较新的版本；转写未完成时不覆盖旧结果。中间有缺口的录音不能覆盖那段缺口内的结果。直播录音若从各自的录音起点计时，会注明“独立计时”，不会拿两个 00:00 直接比较。
+| 想做的事 | 怎么开始 |
+| --- | --- |
+| 找作业、测验、评分要求和课程安排 | 打开“课堂记录”，按课程查看重要事项，展开原文和时间段 |
+| 对照课件、题目和课堂讲解 | 添加文件、截图或本地路径，再问具体问题 |
+| 补上没听懂的内容 | 选定课程和主题，让它结合已有资料解释、出一道练习 |
+| 定期回顾 | 将主题加入复习，结合之后的作答继续调整 |
+| 带走整理结果 | 导出笔记，或要求生成 PDF、Markdown 格式的复习资料与题目 |
+| 离开电脑后接收课堂事项 | 在设置中配对手机提醒端，允许通知并开启后台监听 |
 
-删除时先选中对应字幕，进入 **更多 → 将所选字幕移到回收站**。同课其他来源保留；被它覆盖的旧重复版本也不会重新冒出来。误删可以在课程列表的 **回收站** 中恢复。正在录音或处理中的结果需先结束任务。
+资料支持 PDF、PPTX、DOCX、TXT、Markdown 和图片。给出文件夹时会先列出可读文件供选择；原文件只读。图片理解需要支持图片输入的模型。
 
-- **课时与内容**：浏览概览、知识点和教材章节；点击时间可定位学校回放。
-- **作业与重要事项**：集中查看作业、测验、评分要求和课程安排，保留原文出处。
-- **待整理**：找出还没有完整笔记的记录，继续中断的分析。
+手机端提供 [Android APK][android]，配对方式见 [手机端说明][mobile]。收到实时提醒需要电脑端继续处理课堂、手机能够访问中继并保持后台监听；电脑正在转写，不代表手机已经连接成功。
 
-## 手机课堂提醒
+### 开发版：带出处的跨课时问答
 
-安装 `SCUT 课堂提醒` Android App 后，即使离开电脑、锁屏或切到其他 App，也能收到点名签到、扫码互动、教师提问、课堂测验、作业要求、课程安排、评分要求和特别提醒。
+> 操作系统老师在哪讲过条件变量？给我原句和回看位置。
 
-1. 在电脑端进入 **偏好设置 → 提醒与存储 → 手机课堂提醒**，生成配对二维码。
-2. 手机安装 `dist/SCUT-Classroom-Alerts-v0.10.7.apk`，允许通知，然后扫描二维码。
-3. 保持手机 App 中的“后台监听”开启。系统会显示一条低打扰的常驻状态通知；重要课堂信息使用高优先级通知单独弹出。
+从已导入的多个课时里找相关讲解，回答附字幕原句、课时、时间段和回看入口。只有相关铺垫、没有直接讲解时，会说明检索到的范围。尚未对齐视频的直播录音保留独立计时，不把录音时间当作视频位置。
 
-电脑端只发送 DeepSeek 已结合上下文确认的课堂事件，不发送本地关键词产生的“疑似”提醒。提醒先进入本机可靠队列，断网后自动补发，并按课时和事件内容去重。
+<details>
+<summary>查看跨课时问答示例</summary>
 
-手机与电脑通过 `https://ironegg.vercel.app/api/apps/scut-classroom/*` 通信。这是与 DSH Remote 完全独立的逻辑信箱：使用独立 app-id、channel、Bearer、端到端密钥和 Redis namespace。Vercel 只保存 AES-256-GCM 密文，课程内容在手机本地解密。原始凭据不会进入 Git；电脑端使用 Windows 当前账户的 DPAPI 加密保存，手机端保存在应用私有目录。
+![跨课时查找课堂原句和回看位置][search-image]
 
-Android 使用系统的 `remoteMessaging` 前台服务维持实时监听，默认约 5 秒拉取一次。暂停后台监听后不会继续请求中继；重新打开即可从上次成功处理的游标继续。手机厂商若限制后台活动，请允许该 App 在后台运行。当前 APK 使用 debug 签名，仅供个人安装；后续升级需要保留相同签名。
+</details>
 
-配对成功后，App 首页会切换为提醒时间线，显示提醒的实际发生时间、课程内时间点、课程与课时，并在本机最多保存 200 条记录。列表随后台同步自动更新，也可随时清空；清空手机记录不会删除电脑上的课程笔记。
+### 开发版：今日复习清单
 
-进入一节课后，可以在知识点笔记、重要事项和字幕原文之间切换。“导出笔记”下载 ZIP，内含 Markdown、SRT、TXT 和 JSON。“更多”中提供重新生成笔记、重新转写留存音频等操作。
+> 今晚只有30分钟，先学什么？
 
-知识点按课段整理，每完成一段就保存。作业和要求另做一次全文核对：把同一事项的任务、时间、提交方式和补充说明合并，保留各处原文。超长课使用有前后重叠的大段，再跨段合并；举例、回顾和关键词命中不算已确认任务。
+结合已确认的作业期限、到期复习和最近作答，给出时间预算内的安排。没有足够记录时先做短诊断，不编造薄弱点、截止日期或考试时间。清单中的一段作业时间只表示推进一部分，不代表整项任务已经完成。
 
-旧版记录进入课时后点击 **整理完整事项** 即可补做全文核对，已有的分段笔记会复用。重要事项中的“查看原文与上下文”可以展开证据前后几句，点击时间回到视频。未提及的期限或提交方式不会猜测，关键词初筛单独折叠保存。
+<details>
+<summary>查看 30 分钟复习清单</summary>
 
-新保存的字幕和旧记录中缺少的笔记都会自动排队；已有完整笔记、回收站和被完整版本覆盖的重复字幕不会重复分析。课堂实时提醒的开关只影响上课时的提醒，不影响保存后的笔记。未配置 Key 时先保留字幕，保存 Key 后自动开始。
+![按时间预算安排任务和复习][review-image]
 
-网络失败或服务重启后会自动接着处理，复用相同模型下已经完成的段落。连续失败最多自动尝试三次，重试间隔为 1 分钟、5 分钟；仍未完成时显示原因，可修正配置后点击 **继续生成笔记**。更换模型，或选择“按当前模型重新生成笔记”，会重新分析。
+</details>
 
-## 模型与 Key
+### 开发版：用公开资料核对
 
-语音模型和语言在“设置 → 语音识别”里调整；默认自动识别语言，适合中英文混合课堂。遇到异常长串重复会尝试重新识别，仍不可靠的片段会标记待复核。
+> 查公开教材，核对条件变量为什么要在 while 循环里等待。
 
-DeepSeek 模型可在设置或课堂实况中切换，支持 V4.1 Flash、V4 Pro 和自定义模型名。旧配置中的 `deepseek-v4-flash` 会自动迁移为当前接口使用的 `deepseek-flash`。实时提醒显式关闭思考模式，减少多课堂同时分析时的延迟。Key 输入框不会显示已保存的值；**“Key 已保存到本机”表示已经配置，留空保存不会清除它**。
+先找课堂原话，再检索公开教材或论文线索，对照前提、术语和适用范围。当前接入 Crossref、Europe PMC 和部分公开教材入口；论文往往只能取得摘要，回答会说明实际读到的范围。
 
-控制面板常驻显示 Key 是否已识别。**检测连接** 使用已保存的 Key 请求 DeepSeek 模型列表，分别显示认证失败、网络失败或当前模型可用，不发送课程文字。读取到 Key 和通过远程认证是两种状态；通过认证也不保证账户余额足够支付后续分析。[DeepSeek 接口说明](https://api-docs.deepseek.com/api/list-models)
+公开检索只发送概念词。读教材时按问题选取相关段落，保留页码和来源，减少逐页调用。转载同一篇论文不算多个独立来源；检索结果和模型解释不会自动覆盖字幕，也不会自动成为已确认知识。外部资料不能替老师决定考试范围。
 
-Windows 下，Key 使用当前账户的 DPAPI 加密，单独保存在：
+## 在 WorkBuddy 里使用（开发版）
 
-    %LOCALAPPDATA%\SCUTClassroomAssistant\credentials.json
+WorkBuddy 与学习网页共用本机资料索引。**查已有资料时，直接打开 WorkBuddy 即可，不必先开学习网页或登录百步梯。** 回看学校视频时再去浏览器登录。
 
-它独立于项目代码，升级或换项目目录时会继续使用。旧版 .local/settings.json 中的加密 Key 会自动迁移。环境变量 DEEPSEEK_API_KEY 优先于保存的值。换 Windows 账户后需要重新配置。
+先通过开发版学习助手导入课程或资料，然后在项目目录运行一次：
 
-课堂记录、转写缓存和连接口令保存在项目的 **.local/** 中，已被 Git 忽略。配置 Key 后，自动生成笔记会把已保存课时的转写文字发送给 DeepSeek，不发送学校 Cookie、音视频文件或视频源地址。导出的课程文件也不会自动上传。
+```powershell
+.\.venv\Scripts\python.exe scripts\prepare_workbuddy.py --install
+```
 
-## 常见问题
+在 WorkBuddy 的 **专家·技能·连接器 → 连接器 → 自定义连接器** 中检查 `scut-study`，按提示保存配置并确认连接。应看到在线状态和 **10 个可用工具**。新对话输入 `/` 选择 `scut-study`，也可以直接说“使用 SCUT 学习助手”。
 
-**回放分析失败，需要重新转写吗？**
+课堂出处、今日复习和公开教材核对已在 WorkBuddy 5.9.3 中完成实际对话测试。工具负责找资料和排程，由 WorkBuddy 自己的模型组织回答，不再重复调用本地 DeepSeek。
 
-不需要。字幕已保存时直接继续生成笔记。分析失败、字幕处理失败和未配置 Key 会分别提示。设置里的“实时分析间隔”只影响上课提醒，不用于调整回放分段。
+当前连接器提供查询、排程和公开资料取证；录音控制、批量处理、文件导出和任务状态修改继续在学习助手里操作。固定专家团和公开 Agent 链接尚未发布。[完整接入说明与工具列表][workbuddy]
 
-**更新了代码，扩展还是旧界面？**
+## 模型和个人数据
 
-先结束录音并等上传完成，再到扩展管理页点击“重新加载”，然后刷新学校页面。本地服务也需要停止后重新启动。扩展名称或工具栏图标用于打开面板；“重新加载”才会重启扩展。
+| 功能 | 需要配置什么 |
+| --- | --- |
+| 查看已保存的课堂记录 | 本地服务，桌面入口会自动启动 |
+| 导入学校已有字幕 | 已登录的学校页面与扩展；不需要语音模型 |
+| 本地实时转写、缺字幕回放转写 | Whisper 模型文件、FFmpeg，以及 CPU 或兼容 GPU |
+| 学习网页的问答、生成笔记与课堂分析 | 自己的模型 API Key，支持 DeepSeek 和其他兼容服务 |
+| 图片识读 | 支持图片输入的模型 |
+| WorkBuddy 中查询和回答 | 登录 WorkBuddy，并连接本机 MCP；使用 WorkBuddy 自身的模型 |
 
-**只想下载学校已有字幕？**
+安装包不含语音模型权重。已有 PotPlayer / Faster-Whisper 环境时，可以在设置中选择现有文件，无需移动。设置会显示 Key 是否已保存，并提供连接检测；输入框留空不会清除已有 Key。
 
-扩展的“原版字幕下载”不需要本地语音服务。命令行入口也保留：
+- **安装版数据**：`%LOCALAPPDATA%\SCUTClassroomAssistant\data`，包含笔记、录音缓存、资料索引和运行记录。
+- **源码版数据**：项目的 `.local/`；也可通过 `SCUT_ASSISTANT_HOME` 指定目录。
+- **API Key**：单独保存在 `%LOCALAPPDATA%\SCUTClassroomAssistant\credentials.json`，使用当前 Windows 账户加密，与代码分开。
 
-    uv sync
-    uv run playwright install chromium
-    uv run main.py login
-    uv run main.py get "课程链接"
-    uv run main.py get --all "课程链接"
+使用模型时，相关文字片段或所选图片会发给配置的模型服务；使用 WorkBuddy 时，工具取回的相关片段会交给 WorkBuddy 的模型。学校 Cookie 留在浏览器。手机提醒经过加密中继传送，发布包不含个人设置、课程内容、密钥或模型权重。
 
-识别和分析都可能出错，重要要求请核对原文与课堂录音。当前只处理音频和文字，不识别 PPT 上的二维码，也不会替学生签到、答题或提交作业。请只处理自己有权访问的课程，不公开传播课程内容。
+识别和分析都可能出错。出处能帮助回查，不能单独证明内容正确；重要日期、课堂要求和有争议的概念仍需核对原文。助手不会替学生签到、答题或提交作业。
 
-## 开发
+## 查看它是怎么工作的
 
-    uv sync --extra asr
-    uv run --extra asr python -m assistant_service
-    uv run python scripts/check.py
-    uv run python scripts/package_extension.py
+学习网页的 **运行详情** 可以查看系统提示词、工具参数与结果、引用片段、耗时和用量。WorkBuddy 发起的 MCP 调用也会留下本机记录；这里不展示模型内部的思考过程。
 
-检查脚本还需要 Node.js 和 Git。本地服务监听 **127.0.0.1:8765**；运行 **stop-assistant.ps1** 可停止服务。
+<details>
+<summary>查看运行详情</summary>
 
-详细说明：[ASSISTANT.md](ASSISTANT.md) · 网站接口记录：[SITE_FINDINGS.md](SITE_FINDINGS.md) · 验证范围：[VALIDATION.md](VALIDATION.md)
+![提示词、工具调用和耗时记录][runtime-image]
+
+</details>
+
+## 从源码运行
+
+最新学习助手功能目前位于 `codex/student-agent-foundation` 分支。需要 Git、[uv](https://docs.astral.sh/uv/) 和 Windows；回归检查另需 Node.js。
+
+```powershell
+git clone --branch codex/student-agent-foundation --single-branch https://github.com/PoesisQ/bbt_SCUT_admin.git
+cd bbt_SCUT_admin
+uv sync --extra asr --extra study --python 3.12
+# 首次创建桌面与开始菜单入口，以后从图标打开
+.\install-desktop.ps1
+```
+
+仅调试服务时运行 `uv run --extra asr --extra study python -m assistant_service`，本地页面为 `http://127.0.0.1:8765/study.html`。停止服务前先结束录音和处理任务，再运行 `stop-assistant.ps1`。更新源码后重新启动服务，并在浏览器扩展管理页重新加载扩展。
+
+<details>
+<summary>检查、打包与原版字幕命令</summary>
+
+```powershell
+# Python、JavaScript 回归及格式检查
+uv run --extra study python scripts/check.py
+# 浏览器扩展 ZIP
+uv run python scripts/package_extension.py
+# Windows x64 安装包
+uv run --extra study python scripts/build_windows.py
+```
+
+Windows 包使用 Python 嵌入式运行环境，依赖见 `requirements-windows.lock`；包内附第三方许可和 `THIRD_PARTY.json`。构建步骤见[发行说明][releasing]。
+
+原命令行字幕下载功能仍可使用：
+
+```powershell
+uv run playwright install chromium
+uv run main.py login
+uv run main.py get "课程链接"
+uv run main.py get --all "课程链接"
+```
+
+</details>
+
+<details>
+<summary>常见问题</summary>
+
+- **本地已连接，但课程读不到**：本地服务、浏览器扩展和学校登录是三个状态。打开任务对应的课程播放页，确认已登录且能够播放。
+- **字幕已经有了，笔记分析失败**：检查模型配置后继续生成笔记，不必重新转写整节课。
+- **关闭窗口后，怎么回去**：重新打开桌面入口或点扩展图标即可；不要为了打开面板而重新加载正在录音的扩展。
+- **手机已配对，但收不到提醒**：配对只表示保存了连接信息。检查后台监听、通知权限和网络；VPN 也可能影响中继连接。
+- **WorkBuddy 查不到一门课**：先在学习助手里导入并同步资料；它只能检索已建立索引的内容。
+
+反馈问题时请附版本、操作步骤和错误文字，不要提交 API Key、学校 Cookie 或个人数据库。
+
+</details>
+
+[安装与日常使用][start] · [WorkBuddy 接入][workbuddy] · [更新记录][changelog] · [系统设计][design] · [网站接口记录][site] · [验证记录][validation] · [MIT License](LICENSE)
+
+[setup]: https://github.com/PoesisQ/bbt_SCUT_admin/releases/download/v0.13.0/SCUT-Study-Setup-0.13.0.exe
+[release]: https://github.com/PoesisQ/bbt_SCUT_admin/releases/tag/v0.13.0
+[android]: https://github.com/PoesisQ/bbt_SCUT_admin/releases/download/v0.10.7/SCUT-Classroom-Alerts-v0.10.7.apk
+[issues]: https://github.com/PoesisQ/bbt_SCUT_admin/issues
+[dev]: https://github.com/PoesisQ/bbt_SCUT_admin/tree/codex/student-agent-foundation
+[pr]: https://github.com/PoesisQ/bbt_SCUT_admin/pull/1
+[start]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/manual/START.md
+[workbuddy]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/workbuddy/README.md
+[mobile]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/mobile/README.md
+[changelog]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/CHANGELOG.md
+[design]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/planning/STUDY_TECHNICAL.md
+[site]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/SITE_FINDINGS.md
+[validation]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/VALIDATION.md
+[releasing]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/codex/student-agent-foundation/manual/RELEASING.md
+[study-image]: https://raw.githubusercontent.com/PoesisQ/bbt_SCUT_admin/59ac3f008901249b98858e4ce0f3bd99373101cc/manual/images/02-study.png
+[school-image]: https://raw.githubusercontent.com/PoesisQ/bbt_SCUT_admin/59ac3f008901249b98858e4ce0f3bd99373101cc/manual/images/03-school.png
+[task-image]: https://raw.githubusercontent.com/PoesisQ/bbt_SCUT_admin/59ac3f008901249b98858e4ce0f3bd99373101cc/manual/images/05-task.png
+[search-image]: https://raw.githubusercontent.com/PoesisQ/bbt_SCUT_admin/59ac3f008901249b98858e4ce0f3bd99373101cc/manual/images/05-classroom-search.png
+[review-image]: https://raw.githubusercontent.com/PoesisQ/bbt_SCUT_admin/59ac3f008901249b98858e4ce0f3bd99373101cc/manual/images/06-today-review.png
+[runtime-image]: https://raw.githubusercontent.com/PoesisQ/bbt_SCUT_admin/59ac3f008901249b98858e4ce0f3bd99373101cc/manual/images/04-runtime.png
