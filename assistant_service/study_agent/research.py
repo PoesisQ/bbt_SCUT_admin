@@ -153,7 +153,10 @@ def search_public_references(store, concept, discipline="general", client=None):
     return result
 
 
-def read_public_reference(store, course, reference_id, client=None):
+def read_public_reference(store, course, reference_id, client=None, *, query=""):
+    if not isinstance(query, str) or len(query) > 200:
+        raise ValueError("文内检索词最多 200 字")
+    query = query.strip()
     item = store.get(reference_id, "research_candidate")
     if time.time()-item["retrieved_at"] > CANDIDATE_TTL: raise ValueError("检索候选已过期，请重新检索")
     if item["publication_status"] in {"update_notice", "retraction_notice"}:
@@ -190,6 +193,16 @@ def read_public_reference(store, course, reference_id, client=None):
         ids = [r[0] for r in db.execute("SELECT id FROM evidence WHERE source_id=? ORDER BY rowid", (result["id"],))]
     value = {**result, "reference_id": reference_id, "title": item["title"], "url": item["url"], "coverage": coverage,
         "evidence_ids": ids, "notice": "已读内容仍是未核验参考；不会自动改写课堂原话或确认长期知识。"}
+    if query:
+        # This query stays local. Filter by the selected source before ranking,
+        # otherwise prolific classroom records can crowd a reference out.
+        selected = store.search(query, course, limit=3, source_id=result["id"])
+        value.update(evidence=[evidence_payload(e) | {"active": True, "location": location(e)} for e in selected],
+            evidence_ids=[e["id"] for e in selected], total_chunks=len(ids),
+            selection={"query": query, "limit": 3, "scope": "selected_reference_only"})
+        value["notice"] += " 已返回最多三段相关完整片段，可直接对照，不必逐条重复读取；未返回的部分尚未进入本轮上下文。bounded_full_text 表示有界读取正文，不代表本轮通读全文。"
+        if not selected:
+            value["notice"] += " 本次文内检索没有匹配，可换一个概念词，不能据此断言原文没有讨论。"
     emit("tool.finish", "外部原文已保存出处", {"tool": "read_public_reference", "source_id": result["id"], "coverage": coverage, "chunks": len(ids)})
     return value
 

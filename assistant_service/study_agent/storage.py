@@ -118,7 +118,7 @@ class StudyStore:
         from .knowledge import decorate_evidence
         return decorate_evidence(self, {**json.loads(row[0]), "active": bool(row[1])})
 
-    def search(self, query, course, limit=8):
+    def search(self, query, course, limit=8, *, source_id=None):
         wanted = terms(query + " " + " ".join(value for key, value in ALIASES.items() if key in query))
         if not wanted:
             return []
@@ -126,15 +126,21 @@ class StudyStore:
         from .knowledge import decorate_evidence
         policies = {(p["course"],p["origin"]):p for p in self.list("source_policy")}
         sources = {s["id"]:s for s in self.sources(course)}
+        if source_id is not None:
+            sources = {sid:s for sid,s in sources.items() if sid == source_id}
+            if not sources:
+                return []
         hidden = {s["id"] for s in sources.values() if policies.get((s["course"],s["origin"]),{}).get("excluded")}
         with self.connect() as db:
+            scope = " AND e.source_id=?" if source_id is not None else ""
+            scope_args = (source_id,) if source_id is not None else ()
             if self.indexed:
                 match=" OR ".join('"'+word.replace('"','""')+'"' for word in sorted(wanted)[:160])
                 excluding=" AND e.source_id NOT IN ("+",".join("?" for _ in hidden)+")" if hidden else ""
-                rows=db.execute("SELECT e.data FROM evidence_search f JOIN evidence e ON e.rowid=f.rowid JOIN sources s ON s.id=e.source_id WHERE evidence_search MATCH ? AND s.active=1 AND e.course=?"+excluding+" ORDER BY rank LIMIT ?",
-                    (match, course, *sorted(hidden), max(96, limit*4))).fetchall()
+                rows=db.execute("SELECT e.data FROM evidence_search f JOIN evidence e ON e.rowid=f.rowid JOIN sources s ON s.id=e.source_id WHERE evidence_search MATCH ? AND s.active=1 AND e.course=?"+scope+excluding+" ORDER BY rank LIMIT ?",
+                    (match, course, *scope_args, *sorted(hidden), max(96, limit*4))).fetchall()
             else:
-                rows=db.execute("SELECT e.data FROM evidence e JOIN sources s ON s.id=e.source_id WHERE s.active=1 AND e.course=?",(course,)).fetchall()
+                rows=db.execute("SELECT e.data FROM evidence e JOIN sources s ON s.id=e.source_id WHERE s.active=1 AND e.course=?"+scope,(course,*scope_args)).fetchall()
         for row in rows:
             value = json.loads(row[0])
             if value["source_id"] in hidden:

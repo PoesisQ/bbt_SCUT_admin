@@ -98,6 +98,45 @@ class ResearchTests(unittest.TestCase):
         self.assertNotIn('C:/private', json.dumps(brief))
         self.assertEqual(brief['independent_families'], 2)
 
+    def test_focused_read_returns_bounded_source_specific_context_without_more_network(self):
+        found = search_public_references(self.store, 'condition variables', client=self.client(self.paper_data()))
+        item = next(i for i in found['items'] if i['provider'] == 'curated_textbook')
+        chunks = [{'text': f'while wait predicate Mesa discussion {i}', 'locator': {'page': i + 1}}
+                  for i in range(5)]
+        source = self.store.source(origin=item['url'], course='操作系统', title='Condition variables', kind='external',
+            fingerprint=digest(chunks), chunks=chunks, meta={'coverage':'bounded_full_text', 'retrieved_at':time.time()})
+        # Many highly relevant records from another source must not crowd out the chosen book.
+        self.store.source(origin='other', course='操作系统', title='Other', kind='material', fingerprint='other',
+            chunks=[{'text':'while wait predicate Mesa', 'locator':{'page':i}} for i in range(120)])
+        for indexed in (True, False):
+            self.store.indexed = indexed
+            with patch('assistant_service.study_agent.research.read_reference') as reader:
+                result = read_public_reference(self.store, '操作系统', item['id'], query='while wait predicate Mesa')
+                reader.assert_not_called()
+            self.assertEqual(result['total_chunks'], 5)
+            self.assertEqual(len(result['evidence']), 3)
+            self.assertEqual(result['evidence_ids'], [e['id'] for e in result['evidence']])
+            self.assertTrue(all(e['id'].startswith(source['id'] + ':') for e in result['evidence']))
+            self.assertTrue(all(e['locator']['page'] and 'Mesa' in e['text'] for e in result['evidence']))
+            self.assertNotIn('private/path', json.dumps(result))
+        self.assertEqual(self.store.list('knowledge'), [])
+
+    def test_focused_read_respects_exclusion_empty_search_and_old_clients(self):
+        found = search_public_references(self.store, 'synchronization', client=self.client(self.paper_data()))
+        rid = found['items'][0]['id']
+        original = read_public_reference(self.store, '操作系统', rid)
+        self.assertTrue(original['evidence_ids'])
+        empty = read_public_reference(self.store, '操作系统', rid, query='nonexistenttopic')
+        self.assertEqual(empty['evidence'], [])
+        self.assertIn('不能据此断言', empty['notice'])
+        set_policy(self.store, original['id'], role='reference', excluded=True)
+        blocked = read_public_reference(self.store, '操作系统', rid, query='predicate')
+        self.assertEqual(blocked['evidence'], [])
+        self.assertEqual(self.store.search('predicate', '其他课', source_id=original['id']), [])
+        self.assertEqual(self.store.search('predicate', '操作系统', source_id="' OR 1=1 --"), [])
+        with self.assertRaises(ValueError):
+            read_public_reference(self.store, '操作系统', rid, query='a'*201)
+
     def test_research_operation_marks_missing_classroom_and_bounds_context(self):
         import threading
         from types import SimpleNamespace
