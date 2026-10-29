@@ -5,6 +5,7 @@ import hashlib
 import json
 import re
 import sqlite3
+import threading
 import time
 import uuid
 import zlib
@@ -14,6 +15,7 @@ from pathlib import Path
 
 _CURRENT = contextvars.ContextVar("scut_execution", default=None)
 _PHASE = contextvars.ContextVar("scut_model_phase", default=("answer", 2400))
+_SCHEMA_LOCK = threading.Lock()
 SECRET_FIELDS = {"key", "token", "authorization", "password", "secret", "cookie", "api_key", "bearer"}
 HIDDEN_FIELDS = {"reasoning_content", "chain_of_thought", "encrypted_reasoning"}
 def compact(value):
@@ -46,7 +48,9 @@ class RuntimeLog:
     def __init__(self, root):
         self.path=Path(root)/"agent-runtime.sqlite3"
         self.path.parent.mkdir(parents=True,exist_ok=True)
-        with self.db() as db:
+        # Concurrent first requests can race journal_mode before SQLite's busy
+        # handler is active. Serialize only schema setup; event writes stay concurrent.
+        with _SCHEMA_LOCK, self.db() as db:
             db.executescript("""
               PRAGMA journal_mode=WAL;
               CREATE TABLE IF NOT EXISTS executions(id TEXT PRIMARY KEY,parent_id TEXT,kind TEXT,label TEXT,course TEXT,

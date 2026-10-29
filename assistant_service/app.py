@@ -182,7 +182,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.13.0"}
+        return {"app": "scut-local-assistant", "version": "0.14.0"}
 
     @app.get("/api/health")
     def diagnostics(brief: bool = False):
@@ -532,7 +532,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
     @app.get("/{name}")
     def asset(name: str):
         desktop_assets = {"desktop-entry.js", "desktop-entry.css", "start.html", "start.js"}
-        if name not in desktop_assets | {"study.html", "study.js", "study.css", "study-tools.js", "study-actions.js", "study-conversation.js", "study-conversation.css", "study-runtime.js", "study-runtime.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
+        if name not in desktop_assets | {"study.html", "study.js", "study.css", "study-tools.js", "study-actions.js", "study-specialized.js", "study-conversation.js", "study-conversation.css", "study-runtime.js", "study-runtime.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)
         response = FileResponse(ROOT / "extension" / name)
         if name.endswith(".html"):

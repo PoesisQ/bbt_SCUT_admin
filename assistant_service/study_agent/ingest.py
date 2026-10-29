@@ -120,7 +120,7 @@ def sync_sessions(study, sessions):
         segments = session.get("segments", [])
         if not segments:
             continue
-        fingerprint = digest([segments, session.get("time_basis"), session.get("title")])
+        fingerprint = digest(["timed-spans-v2", segments, session.get("time_basis"), session.get("title"), session.get("page_url")])
         if study.duplicate(session.get("course_title") or "未分类课程", fingerprint):
             duplicates += 1
             continue
@@ -128,10 +128,14 @@ def sync_sessions(study, sessions):
 
         def flush():
             if buffer:
+                offset, spans = 0, []
+                for s in buffer:
+                    spans.append({"offset": offset, "length": len(s["text"]), "start": s.get("start"), "end": s.get("end")})
+                    offset += len(s["text"]) + 1
                 chunks.append({"text": "\n".join(s["text"] for s in buffer), "locator": {
                     "session_id": session["id"], "start": buffer[0].get("start", 0),
                     "end": buffer[-1].get("end", 0), "time_basis": session.get("time_basis", "video"),
-                    "segment_ids": [s.get("id", "") for s in buffer]}})
+                    "spans": spans, "segment_ids": [s.get("id", "") for s in buffer]}})
 
         for segment in segments:
             if size + len(segment.get("text", "")) > 2600 and buffer:
@@ -143,7 +147,8 @@ def sync_sessions(study, sessions):
         result = study.source(origin=origin, course=session.get("course_title") or "未分类课程",
                               title=session.get("title", "课堂字幕"), kind="school_subtitle" if session.get("mode") == "subtitle" else "asr",
                               fingerprint=fingerprint, chunks=chunks,
-                              meta={"course_id": session.get("course_id"), "sub_id": session.get("sub_id")})
+                              meta={"course_id": session.get("course_id"), "sub_id": session.get("sub_id"),
+                                    "page_url": session.get("page_url", "")})
         duplicates += int(result["duplicate"])
         count += int(not result["duplicate"])
     # Deleted/superseded classroom records stop participating in new answers.

@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .storage import digest
 from .prompt_catalog import read as read_prompt, study_prompt
 from .context import evidence_payload, pack_evidence, history_context, select_memory
+from .classroom_search import classroom_evidence, mention_cards, attach_locations, topic_query
 from ..telemetry import RuntimeLog, compact, current, emit, model_start, model_finish, model_phase, phase, traced
 
 
@@ -263,15 +264,20 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
         candidates = store.search(query, course, 12)
         references = [e for e in candidates if e["kind"] not in {"asr", "school_subtitle", "image_reading", "student_report"}]
         references.sort(key=lambda e: not e.get("policy", {}).get("trusted"))
-        found = list({e["id"]:e for e in [*references[:2], *candidates]}.values())[:6]
+        lectures = classroom_evidence(store, course, query, 6) if purpose == "classroom" else []
+        found = list({e["id"]:e for e in [*lectures, *references[:2], *([] if purpose == "classroom" else candidates)]}.values())[:8 if purpose == "classroom" else 6]
         trace.append({"tool":"search_sources", "query":query, "found":len(found)})
         emit("tool.finish", "检索完成", {"tool":"search_sources", "result":[{"id":e["id"],"title":e["title"],"locator":e.get("locator",{}),"reliability":e.get("reliability")} for e in found]})
         return include(found)
 
     history = history_context(history or [], question)
     prior_topic = " ".join(x.get("question", "")[:160] for x in history[-2:])
-    initial = include((focus or [])[:6])
-    initial += retrieve(question + " " + prior_topic)
+    initial = include([] if purpose == "classroom" else (focus or [])[:6])
+    initial += retrieve(topic_query(question, course) if purpose == "classroom" else question + " " + prior_topic)
+    def classroom_cards():
+        return mention_cards([e for e in allowed.values() if e.get("locator", {}).get("session_id")], topic_query(question, course))[:8]
+    if purpose == "classroom" and not classroom_cards():
+        return {"status":"needs_sources", "reply":"已导入的课堂记录里还没找到对应原句。可以换一个术语，或先整理相关回放。", "claims":[], "proposals":[], "uncertainties":[], "classroom_matches":[], "trace":trace}
     catalog = [{k:v for k,v in item.items() if k in {"title","kind"}} for item in store.sources(course)][:25]
     if not initial and not catalog:
         return {"status":"needs_sources", "reply":"这门课还没有可参考的内容。发一页课件、截图或相关原文就可以。", "claims":[], "proposals":[], "uncertainties":[], "trace":trace}
@@ -402,6 +408,9 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
             if result["exercise"]:
                 practice = store.save("practice", {**result["exercise"], "course": course, "attempts": [], "due_at": time.time()})
                 result["exercise"] = {k: v for k, v in practice.items() if k != "expected_answer"}
+            attach_locations(result, allowed)
+            if purpose == "classroom":
+                result["classroom_matches"] = classroom_cards()
             result.update(status="ready", trace=trace, evidence=list(allowed.values()),
                           prompt_version="study-v2", elapsed_seconds=round(time.monotonic() - started, 2))
             result["trace_id"] = current().id if current() else None
@@ -409,5 +418,8 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
             return result
     except ValueError as exc:
         store.save_run({"course": course, "status": "failed", "trace": trace, "error": str(exc)[:240]})
+        if purpose == "classroom" and classroom_cards():
+            return {"status":"sources_only", "reply":"已找到这些课堂原句。解释暂时没通过检查，可以先回看原文。", "claims":[], "proposals":[],
+                    "uncertainties":[str(exc)[:240]], "classroom_matches":classroom_cards(), "trace":trace}
         raise
     raise ValueError(failure or "本轮没有形成可核对的结果")

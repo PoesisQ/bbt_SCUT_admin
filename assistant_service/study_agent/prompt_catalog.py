@@ -4,6 +4,7 @@ import hashlib
 
 ROOT = Path(__file__).parent / "prompts"
 PURPOSES = {
+    "classroom": "回答老师在哪些课时讲过这个问题。先用1–3条claim解释，再引用跨课时原句；引文要短且完整。教材可用于核对概念，但不能据此说老师讲过。课时、时间和回看链接由本机按引文生成，不在reply中猜写。只有转写时须保留识别误差提醒。没检索到原文只说已导入记录中未找到，不说老师没讲。exercise为null。",
     "ask": "普通追问先用1–3条带引文的解释回答关键点；只缺必要信息才追问。exercise为null。",
     "verify": "逐项比较条件、符号和结论，标出一致/冲突/待核对并给双方出处，不推测原文遗漏。exercise为null。",
     "summary": "围绕核心问题、推导关系、适用边界、未解决的疑问深入总结，避免逐句缩写。exercise为null。",

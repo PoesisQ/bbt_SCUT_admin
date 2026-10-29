@@ -9,6 +9,8 @@ from .reasoner import run_agent
 from .storage import digest
 from .learning import review_candidates, preferences
 from .operations import choose_operation
+from .daily import is_daily_question, daily_reply
+from .classroom_search import is_classroom_question
 from ..telemetry import traced, current, emit
 
 
@@ -57,9 +59,10 @@ def converse(store, provider, root, *, conversation, client_id, course, question
     except KeyError:
         old = None
     history = turns(store, conversation)
-    available = sorted({s["course"] for s in store.sources()}, key=len, reverse=True)
+    available = sorted({s["course"] for s in store.sources()} | {t["course"] for kind in ("task", "review", "practice") for t in store.list(kind)}, key=len, reverse=True)
     mentioned = [name for name in available if name in question]
     mentioned = [name for name in mentioned if not any(name != other and name in other for other in mentioned)]
+    daily_request = purpose == "today" or purpose == "auto" and is_daily_question(question)
     plain_plan = choose_operation(None, question, course) if purpose == "auto" else None
     batch_request = plain_plan and plain_plan["tool"] == "process_missing_lessons"
     ambiguous = bool(batch_request and len(mentioned) > 1)
@@ -81,6 +84,15 @@ def converse(store, provider, root, *, conversation, client_id, course, question
         "purpose": purpose, "review_id": review_id, "status": "running", "trace_id":current().id if current() else None, "created_at": old["created_at"] if old else time.time(),
         "attachments": [{k: a[k] for k in ("id", "name", "image")} for a in selected_attachments]}
     store.save("turn", turn, tid)
+    if daily_request and not attachments:
+        try:
+            # A general evening budget covers all courses, regardless of the last selected course.
+            scope = mentioned[0] if len(mentioned) == 1 else ""
+            result = daily_reply(store, question, scope)
+            return public_turn(store.save("turn", {**turn, "course": scope, "purpose": "today", "status": "ready", "result": result}, tid))
+        except Exception as exc:
+            store.save("turn", {**turn, "status": "failed", "error": str(exc)[:240]}, tid)
+            raise
     if not course:
         result = {"reply": "这条消息提到了多门课，请先选一门要处理的课程。" if ambiguous else "先告诉我这是哪门课就好。你发来的问题和附件已经留在这里，选好后我接着看。",
                   "choose_course": available, "claims": [], "proposals": [], "uncertainties": [], "status": "needs_course"}
@@ -117,7 +129,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
                 if item["active"]:
                     focus.insert(0, item)
         if purpose == "auto":
-            purpose = "practice" if any(s in question for s in ("出道题", "出一道", "考考我", "检验一下")) else (
+            purpose = "classroom" if is_classroom_question(question) else "practice" if any(s in question for s in ("出道题", "出一道", "考考我", "检验一下")) else (
                 "connect" if any(s in question for s in ("串联", "联系", "关联", "前置知识")) else (
                 "summary" if any(s in question for s in ("深入总结", "完整总结", "梳理整章")) else "ask"))
         result = run_agent(store, provider, course=course, question=question, purpose=purpose,

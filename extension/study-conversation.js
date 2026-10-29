@@ -12,7 +12,7 @@
     b.addEventListener("click", async () => { b.disabled = true; try { await handler(); } catch (e) { notice(e.message); } finally { b.disabled = false; } }); return b;
   }
   function scrollLatest() { $("composer-anchor").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "end"}); }
-  function cite(parent, citations) { for (const [i, c] of (citations || []).entries()) { const b = button("依据 " + (i + 1) + " ↗", () => T.showEvidence(c.evidence_id), "cite"); b.title = c.quote; parent.append(b); } }
+  function cite(parent, citations) { for (const [i, c] of (citations || []).entries()) { const b = button(c.location ? `${c.location.lesson} · ${c.location.time_label}` : "依据 " + (i + 1) + " ↗", () => T.showEvidence(c.evidence_id), "cite"); b.title = c.quote; parent.append(b); const replay = StudySpecialized.replayLink(c.location); if (replay) parent.append(replay); } }
   function menuClose() { $("tools-menu").close(); }
   $("open-tools").addEventListener("click", () => $("tools-menu").showModal());
   $("close-tools").addEventListener("click", menuClose);
@@ -93,6 +93,11 @@
   }
   function renderAnswer(root, turn) {
     const r = turn.result || {}; if (r.reply && !r.operation_id) root.append(el("p", r.reply));
+    StudySpecialized.renderDaily(root, r.daily_plan, button, step => {
+      if (step.kind === "replan") return send(`今天${step.course ? "只安排" + step.course + "，" : ""}还有 ${step.minutes} 分钟，按当前进度重新安排复习清单。`, {course:step.course, purpose:"today"});
+      if (step.kind === "review") return startReview({...step, topic:step.title});
+      return send(step.kind === "task" ? `我现在留出 ${step.minutes} 分钟做“${step.title}”。结合已确认的要求，帮我拆出可以动手的下一步。不要直接给作业答案。` : `请围绕“${step.title}”给一道题，检验上次没弄清的地方。`, {course:step.course, purpose:step.kind === "task" ? "ask" : "practice"});
+    });
     if (r.status === "needs_course") {
       const choices = el("div", undefined, "suggestions");
       for (const name of r.choose_course || []) choices.append(button(name, () => { $("course").value = name; return send(turn.question, {course: name, attachments: turn.attachments.map(a => a.id)}); }));
@@ -110,6 +115,7 @@
       if (index > 1 && !["summary", "connect"].includes(turn.purpose)) { if (!extra) { extra = el("details", undefined, "more-explanation"); extra.append(el("summary", "继续展开讲讲")); root.append(extra); } extra.append(row); } else root.append(row);
     }
     for (const link of r.connections || []) { const row = el("div", undefined, "knowledge-link"); row.append(el("strong", link.concept_a + "  ↔  " + link.concept_b), el("p", link.relationship)); cite(row, link.citations); root.append(row); }
+    StudySpecialized.renderMentions(root, r.classroom_matches, button);
     if (r.uncertainties?.length) { const details = el("details", undefined, "caveats"); if (!r.claims?.length && !r.exercise) details.open = true; details.append(el("summary", "还需要核对的地方 · " + r.uncertainties.length)); for (const text of r.uncertainties) details.append(el("p", text)); root.append(details); }
     if (r.proposals?.length) { const p = r.proposals[0], card = el("div", undefined, "inline-step"); card.append(el("span", "待确认事项", "fine"), el("h3", p.title), el("p", p.detail), button("核对并保存", () => proposalSteps(card, p, turn.course))); root.append(card); }
     if (r.exercise) renderExercise(root, r.exercise, turn);
@@ -165,25 +171,9 @@
     for (const r of home.reviews) { const card = el("div", undefined, "review-row"); card.append(el("span", r.course, "pill"), el("h3", r.topic), el("p", niceTime(r.due_at)+" · 约 "+r.minutes+" 分钟 · "+(r.reasons||[]).join("；"), "fine"), button("现在回忆", () => startReview(r)), button("推迟一天", async () => { await post(`/reviews/${r.id}`, {action: "snooze"}); await refresh(); renderReviews(); }), button("暂停这一项", async () => { await post(`/reviews/${r.id}`, {action: "pause"}); await refresh(); renderReviews(); })); root.append(card); }
   }
   async function today() {
-    await refresh(); if (home.due.length) return startReview(home.due[0]);
-    const tasks = (T.state()?.tasks || []).filter(t => t.status === "accepted" && !t.completed);
-    if (tasks.length) {
-      $("welcome").hidden = true; const card = el("div", undefined, "assistant-message inline-step"); $("conversation").append(card);
-      card.append(el("p", `有 ${tasks.length} 件已确认的任务。今天先留多少时间？`));
-      for (const minutes of [20, 40, 90]) card.append(button(minutes + " 分钟", async () => {
-        card.replaceChildren(el("p", "好，今天从几点开始？我会避开已确认的上课时段。"));
-        for (const hour of [19, 20]) { const later = new Date().getHours() >= hour ? 1 : 0; card.append(button((later ? "明晚 " : "今晚 ") + hour + ":00", async () => {
-          const start = new Date(Date.now() + later * 86400000 - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
-          const plan = await post("/plans", {start, days: 1, daily_minutes: minutes, start_hour: hour});
-          card.replaceChildren(el("h3", "今天的安排"));
-          for (const b of plan.blocks) card.append(el("p", `${b.start.slice(11,16)}–${b.end.slice(11,16)} · ${b.course} · ${b.title}`));
-          for (const r of plan.risks) card.append(el("p", r.text, "fine"));
-          if (plan.blocks.length) card.append(button("就按这份安排", async () => { await post(`/plans/${plan.id}/confirm`); notice("今天的安排已保存，详细计划和日历在“资料与安排”里。"); await T.load(); }));
-        })); }
-      })); scrollLatest();
-    }
-    else { $("question").value = "我想从最近的一节课开始，你能先帮我找出一个值得弄懂的关键问题吗？"; $("question").focus(); notice("先从关心的一门课开始。可以直接发送，也可以改成自己的话。"); }
+    return send("今晚只有30分钟，先学什么？", {course:"", purpose:"today"});
   }
+  $("open-today").addEventListener("click", () => today().catch(e => notice(e.message)));
   document.querySelectorAll("[data-starter]").forEach(b => b.addEventListener("click", () => { if (b.dataset.intent === "today") today().catch(e => notice(e.message)); else { $("question").value = b.dataset.starter; $("question").focus(); } }));
   async function send(text, options = {}) {
     if (sending || uploading) return;

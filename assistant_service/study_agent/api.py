@@ -20,6 +20,8 @@ from .reviews import create_review, update_review
 from .operations import OperationQueue, choose_operation
 from .knowledge import catalog, set_policy, remember_claim
 from .learning import answer_feedback
+from .daily import daily_plan, is_daily_question
+from .classroom_search import find_classroom_mentions, location
 from .timetable import expand_timetable, extract_timetable
 
 
@@ -44,7 +46,7 @@ class Chat(Strict):
     client_id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,80}$")
     course: str = Field(default="", max_length=160)
     question: str = Field(min_length=1, max_length=3000)
-    purpose: Literal["auto", "ask", "verify", "requirements", "practice", "connect", "summary"] = "auto"
+    purpose: Literal["auto", "ask", "verify", "requirements", "practice", "connect", "summary", "classroom", "today"] = "auto"
     attachments: list[str] = Field(default_factory=list, max_length=4)
     review_id: str | None = Field(default=None, max_length=80)
 
@@ -52,6 +54,16 @@ class Chat(Strict):
 class ReviewCreate(Strict):
     turn_id: str = Field(max_length=80)
     days: int = Field(default=1, ge=1, le=30)
+
+
+class Today(Strict):
+    minutes: int = Field(default=30, ge=1, le=240, strict=True)
+    course: str = Field(default="", max_length=160)
+
+
+class ClassroomQuery(Strict):
+    course: str = Field(min_length=1, max_length=160)
+    query: str = Field(min_length=1, max_length=500)
 
 
 class ReviewUpdate(Strict):
@@ -232,6 +244,8 @@ def router(settings, classroom_store):
         from .operations import tool_schemas
         return {"prompts":prompts(), "purpose_rules":PURPOSES, "tools":tool_schemas(),
             "retrieval_tools":[{"name":"search_sources", "arguments":{"query":"本课关键词"}, "scope":"只检索当前课程，排除停用资料"},
+                {"name":"find_classroom_mentions", "arguments":{"course":"课程名称", "query":"主题术语"}, "scope":"跨课时查原句、核验时间，字幕不自动成为确认知识"},
+                {"name":"plan_today_review", "arguments":{"minutes":30, "course":"可选，留空为全部课程"}, "scope":"只读任务与作答记录；总用时不超过预算，不调用模型"},
                 {"name":"read_surrounding_context", "arguments":{"evidence_id":"已读片段 ID"}, "scope":"读取同一资料的前后段落"}],
             "budgets":{"source_characters":24000,"history_characters":2000,"max_model_steps":3,
                        "support_cache_days":7,"support_cache_entries":256},
@@ -340,6 +354,8 @@ def router(settings, classroom_store):
 
     @api.post("/chat")
     def chat(body: Chat):
+        if not body.attachments and (body.purpose == "today" or body.purpose == "auto" and is_daily_question(body.question)):
+            return converse(study, provider, settings.root, operations=operations, **body.model_dump())
         if not model_gate.acquire(blocking=False):
             # Explicit operations only enqueue; they need not wait for a long export.
             if body.purpose == "auto" and choose_operation(None, body.question, body.course):
@@ -433,7 +449,17 @@ def router(settings, classroom_store):
 
     @api.get("/evidence/{eid}")
     def evidence(eid: str):
-        return study.evidence(eid)
+        e = study.evidence(eid)
+        return {**e, "location": location(e)}
+
+    @api.post("/classroom-search")
+    def classroom_search(body: ClassroomQuery):
+        ingest.sync_sessions(study, classroom_store.records())
+        return find_classroom_mentions(study, body.course, body.query)
+
+    @api.post("/today")
+    def today_plan(body: Today):
+        return daily_plan(study, body.minutes, body.course)
 
     @api.post("/run")
     def run(body: Ask):

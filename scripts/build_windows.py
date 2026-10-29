@@ -22,14 +22,14 @@ PYTHON_MD5 = 'fe8ef205f2e9c3ba44d0cf9954e1abd3'
 
 
 def public_files(root=ROOT):
-    for folder in ('assistant_service', 'extension', 'manual'):
+    for folder in ('assistant_service', 'extension', 'manual', 'workbuddy'):
         for p in (root/folder).rglob('*'):
             rel=p.relative_to(root)
             if p.is_file() and not any(part.startswith('.') or part=='__pycache__' for part in rel.parts) and not p.name.endswith('.test.js') and p.name!='local-connection.js':
                 yield rel
     for name in ('config.py','subtitle.py','LICENSE','README.md','start-assistant.ps1','stop-assistant.ps1',
                  'register-launcher.ps1','register-native-launcher.ps1','install-desktop.ps1',
-                 'scripts/NativeLauncher.cs','scripts/DesktopLauncher.cs'):
+                 'scripts/NativeLauncher.cs','scripts/DesktopLauncher.cs','scripts/study_mcp.py','scripts/prepare_workbuddy.py'):
         yield Path(name)
 
 
