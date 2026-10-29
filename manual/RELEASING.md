@@ -8,7 +8,7 @@
 
 ```powershell
 uv sync --extra asr --extra study
-uv run python scripts/check.py
+uv run --extra study python scripts/check.py
 uv run python scripts/package_extension.py
 uv run --extra study python scripts/build_windows.py
 ```

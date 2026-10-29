@@ -79,7 +79,7 @@ uv run --extra asr --extra study python -m assistant_service
 # 源码运行首次创建桌面入口
 .\install-desktop.ps1
 # 回归检查，另需 Node.js 和 Git
-uv run python scripts/check.py
+uv run --extra study python scripts/check.py
 # 扩展 ZIP
 uv run python scripts/package_extension.py
 # Windows x64 安装包（Windows + Python 3.12 + uv）
