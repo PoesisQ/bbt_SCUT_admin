@@ -16,7 +16,8 @@ def configuration(data_dir, python=None, root=ROOT):
     data_dir = Path(data_dir).resolve()
     if not (data_dir / "study-agent.sqlite3").is_file():
         raise ValueError("先在学习助手中导入课程资料，再选择该资料库目录。")
-    return {"mcpServers": {"scut-study": {"type": "stdio", "command": str(Path(python or sys.executable).resolve()),
+    # Resolving a Unix venv symlink launches the base interpreter without its deps.
+    return {"mcpServers": {"scut-study": {"type": "stdio", "command": str(Path(python or sys.executable).absolute()),
         "args": [str(root / "scripts/study_mcp.py"), "--data-dir", str(data_dir)], "timeout": 30000}}}
 
 

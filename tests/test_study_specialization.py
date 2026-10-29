@@ -188,6 +188,7 @@ class SpecializationTests(unittest.TestCase):
     def test_workbuddy_config_and_export_do_not_contain_secrets_or_origins(self):
         cfg = configuration(self.root)
         self.assertEqual(cfg["mcpServers"]["scut-study"]["type"], "stdio")
+        self.assertEqual(cfg["mcpServers"]["scut-study"]["command"], str(Path(sys.executable).absolute()))
         self.assertNotIn("env", cfg["mcpServers"]["scut-study"])
         self.assertEqual(export_course(self.root, self.root, "操作系统"), 2)
         folder = self.root / "knowledge-snapshot"
@@ -238,6 +239,21 @@ class SpecializationTests(unittest.TestCase):
         self.assertEqual(len(lines), 2)
         answer = json.loads(lines[1]["result"]["content"][0]["text"])
         self.assertEqual(len(answer["items"]), 2)
+
+    def test_today_diagnostic_feedback_immediately_changes_priority(self):
+        p = self.store.save("practice", {"course":"操作系统", "question":"条件变量为什么需要循环检查？", "citations":[self.reference()],
+            "attempts":[{"rating":1,"at":self.now-60}]})
+        result = daily_plan(self.store, 25, now=self.now)
+        self.assertEqual(result["steps"][0]["id"], p["id"])
+        self.assertIn("刚才", result["steps"][0]["action"])
+        self.store.save("practice", {**p, "attempts":[{"rating":3,"at":self.now}]}, "new-attempt")
+        self.assertEqual(daily_plan(self.store, 25, now=self.now)["steps"], [])
+
+    def test_paused_review_does_not_reappear_as_a_weak_practice(self):
+        p = self.store.save("practice", {"course":"操作系统", "question":"条件变量为什么需要循环检查？", "citations":[self.reference()],
+            "attempts":[{"rating":1,"at":self.now-60}]})
+        self.review(p["question"], source=p["id"], status="paused")
+        self.assertEqual(daily_plan(self.store, 30, now=self.now)["steps"], [])
 
 
 if __name__ == "__main__":

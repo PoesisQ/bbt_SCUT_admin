@@ -109,21 +109,30 @@ def daily_plan(store, minutes=30, course="", now=None):
             "citations": review.get("citations", []), "mode": review["mode"],
             "action": "先不看资料解释关键条件，再做一道题，最后对照原文检查。"})
     # Weak answers also count before the student explicitly creates a spaced-review card.
-    for p in store.list("practice"):
+    practices, all_reviews = store.list("practice"), store.list("review")
+    for p in practices:
         if course and p["course"] != course or not p.get("attempts"):
             continue
         last = p["attempts"][-1]
         feedback = last.get("feedback") or {}
         rating = min(last["rating"], feedback.get("suggested_rating", 4)) if feedback.get("status") == "model_checked" else last["rating"]
-        if rating > 2 or now - last.get("at", now) > 30 * 86400 or local.date() == datetime.fromtimestamp(last.get("at", now), TZ).date():
+        if rating > 2 or now - last.get("at", now) > 30 * 86400:
             continue
-        if any(r.get("source") == p["id"] or (r["course"] == p["course"] and _related(r["topic"], p["question"])) for r in reviews):
+        if any(r.get("source") == p["id"] or (r["course"] == p["course"] and _related(r["topic"], p["question"])) for r in all_reviews):
+            continue
+        # A later attempt on the same topic supersedes an older weak answer for
+        # prioritisation. This is not a claim of objective mastery.
+        if any(other["id"] != p["id"] and other["course"] == p["course"] and other.get("attempts")
+               and other["attempts"][-1].get("at", 0) > last.get("at", 0)
+               and _related(other["question"], p["question"])
+               and {c["evidence_id"] for c in other.get("citations", [])} & {c["evidence_id"] for c in p.get("citations", [])}
+               for other in practices):
             continue
         if not _current_citations(store, p.get("citations", [])):
             continue
         candidates.append({"kind": "practice", "id": p["id"], "course": p["course"], "title": p["question"],
             "priority": 74, "minutes": 8, "reasons": ["这道题上次还没弄清楚（依据作答反馈或自评）"],
-            "citations": p["citations"], "action": "重述题目条件，试着独立作答，再核对上次遗漏的地方。"})
+            "citations": p["citations"], "action": "针对刚才没讲清的条件换一道基础题，再回到原问题。" if local.date() == datetime.fromtimestamp(last.get("at", now), TZ).date() else "重述题目条件，试着独立作答，再核对上次遗漏的地方。"})
     calibration = False
     if not candidates and not reviews and not store.list("practice"):
         # Cold start: do not label a random recent topic as a weakness. One short
