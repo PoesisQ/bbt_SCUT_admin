@@ -15,7 +15,7 @@ function harness({mismatch=false,claimError=false}={}) {
   const items=[{sub_id:'1',status:'skipped'},{sub_id:'2',status:'pending',action:'analyze',sid:'a'.repeat(32)},
     {sub_id:'3',status:'pending',action:'import'},{sub_id:'4',status:'pending',action:'retry',sid:'b'.repeat(32)}];
   const context={crypto:require('node:crypto').webcrypto,URL,ScutSubtitleCore:{parseCourseUrl:s=>s.includes('livingroom')?{courseId:'5'}:null},chrome:{runtime:{getManifest:()=>({version:'0.13.0'})},storage:{local:{get:async()=>local,set:async v=>Object.assign(local,v)}},tabs:{query:async()=>[{id:91,url:'https://video.jw.scut.edu.cn/livingroom?course_id=5&sub_id=3'},{id:92,url:'https://video.jw.scut.edu.cn/livingroom?course_id=5&sub_id=3'}]}},
-    SchoolAPI:{inspect:async id=>{if(id===91)throw Error('No tab with id');return {lesson:{course_title:mismatch?'另一门课':'操作系统'},context:{courseId:'5',url:'https://video.jw.scut.edu.cn/livingroom?course_id=5&sub_id=3'}};},get:async()=>items},ScutStudy:{catalogue:x=>x}};
+    SchoolAPI:{inspect:async id=>{if(id===91)throw Error('No tab with id');return {status:'6',lesson:{course_title:mismatch?'另一门课':'操作系统'},context:{courseId:'5',url:'https://video.jw.scut.edu.cn/livingroom?course_id=5&sub_id=3'}};},get:async()=>items},ScutStudy:{catalogue:x=>x}};
   vm.createContext(context);vm.runInContext(fs.readFileSync(__dirname+'/study-bridge.js','utf8'),context);
   const client={api:async(path,opts={})=>{calls.push({path,...opts});if(path.endsWith('/work'))return jobs;if(path.endsWith('/browser-requests'))return [];
     if(path.endsWith('/claim')){if(claimError)throw Error('leased');return {status:'running'};}
@@ -42,3 +42,5 @@ test('manual batch and cancellation stop further automatic submissions',async()=
   let leases=0;h.options.client.api=async(p,o)=>{if(p.endsWith('/claim')&&++leases>1)return {status:'cancelled'};return original(p,o);};
   await h.poll();assert.equal(h.imports.length,0);assert.ok(!h.calls.some(c=>c.path.startsWith('/api/sessions/')));
 });
+
+test("empty successful school response is not a readable course",async()=>{const t=setup({tabs:[{id:1,url:"https://video.jw.scut.edu.cn/livingroom?course_id=1&sub_id=2"}],views:{1:{status:"undefined",lesson:{course_title:"课程"}}}});await t.api.poll({client:t.client,busy:()=>true});assert.equal(t.calls[0][1].body.courses.length,0);assert.equal(t.calls[0][1].body.unreadable_tabs,1);});

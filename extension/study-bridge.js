@@ -18,7 +18,9 @@ globalThis.ScutAgentBridge = (() => {
       const checked=await Promise.allSettled(selected.map(async tab=>{
         const cached=inspections.get(tab.id);
         if(cached&&cached.url===tab.url&&Date.now()-cached.at<25000)return cached.view;
-        try{const view=await SchoolAPI.inspect(tab.id,{includeCatalogue:false});inspections.set(tab.id,{url:tab.url,at:Date.now(),view});return view;}
+        try{const view=await SchoolAPI.inspect(tab.id,{includeCatalogue:false});
+          if(!view.status||view.status==="undefined"||!view.lesson?.course_title||view.lesson.course_title==="课程")throw new Error("学校未返回有效课程信息");
+          inspections.set(tab.id,{url:tab.url,at:Date.now(),view});return view;}
         catch(e){inspections.delete(tab.id);throw e;}
       }));
       const views=checked.filter(r=>r.status==="fulfilled").map(r=>r.value),unreadable=checked.length-views.length;
