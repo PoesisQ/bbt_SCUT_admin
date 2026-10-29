@@ -202,11 +202,24 @@ chrome.runtime.onMessage.addListener((message,sender,respond)=>{
   if(message.target==="offscreen") return false;
   if(sender.id!==chrome.runtime.id) return false;
   const trusted=sender.url?.startsWith(chrome.runtime.getURL(""));
+  const localPage=/^http:\/\/(127\.0\.0\.1|localhost):8765\//.test(sender.url||"");
   const contentAllowed=["OVERLAY_READY","PLAYER_CHANGED","SET_OVERLAY_PREFS","OPEN_CLASSROOM","PAGE_ASSISTANT_READY","SET_SITE_ENTRY_PREF","OPEN_ASSISTANT","OPEN_NOTEBOOK"];
-  if(!trusted&&(!schoolPage(sender.url)||!contentAllowed.includes(message.type))) return false;
+  if(!trusted&&!(localPage&&message.type==="LOCAL_APP_READY")&&(!schoolPage(sender.url)||!contentAllowed.includes(message.type))) return false;
   (async()=>{
     await ready;
     switch(message.type) {
+      case "LOCAL_APP_READY": {
+        if(!localPage||!sender.tab?.id)return false;
+        // Read via the same-origin local page; never accept a token posted by a school page.
+        const values=await chrome.scripting.executeScript({target:{tabId:sender.tab.id},world:"MAIN",func:async()=>{
+          if(!/^http:\/\/(127\.0\.0\.1|localhost):8765$/.test(location.origin))return null;
+          const r=await fetch("/api/pairing-token");return r.ok?(await r.json()).token:null;
+        }});
+        const token=values?.[0]?.result;
+        if(typeof token!=="string"||token.length<20)return false;
+        await A.fetchWithToken(token,"/api/health?brief=true",{timeout:5000});
+        await A.setConnection(token);void pollStudyJobs();return true;
+      }
       case "PAGE_ASSISTANT_READY": {
         const {autoOpenAssistant=true}=await chrome.storage.local.get("autoOpenAssistant");
         const capture=await captureFor({tabId:sender.tab?.id});
@@ -325,6 +338,7 @@ chrome.tabs.onRemoved.addListener(async tabId=>{
   if(capture) await tellRecorder("STOP",{sid:capture.sid,tabId,warning:"课程标签页已关闭；正在保存剩余音频"}).catch(()=>{});
 });
 chrome.tabs.onUpdated.addListener(async(tabId,change)=>{
+  if(change.status==="complete")void chrome.tabs.get(tabId).then(t=>{if(schoolPage(t.url))void pollStudyJobs();}).catch(()=>{});
   if(!change.url) return;
   const capture=await captureFor({tabId});
   if(capture&&change.url!==capture.url) await tellRecorder("STOP",{sid:capture.sid,tabId,warning:"课程页面已切换，已结束上一课时录制"}).catch(()=>{});

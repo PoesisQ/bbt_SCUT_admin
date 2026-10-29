@@ -139,6 +139,8 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
     study_api = study_router(settings, store)
     app.state.study_operations = study_api.operations
     app.include_router(study_api)
+    from .desktop import router as desktop_router
+    app.include_router(desktop_router(settings, store))
     app.add_middleware(CORSMiddleware,
                        allow_origin_regex=rf"chrome-extension://[a-p]{{32}}|{local_origin}",
                        allow_methods=["GET", "POST", "OPTIONS"], allow_headers=["Authorization", "Content-Type"])
@@ -180,7 +182,7 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
 
     @app.get("/health")
     def health():
-        return {"app": "scut-local-assistant", "version": "0.12.0"}
+        return {"app": "scut-local-assistant", "version": "0.13.0"}
 
     @app.get("/api/health")
     def diagnostics(brief: bool = False):
@@ -523,13 +525,14 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
     # Loopback HTML pairs through an HttpOnly same-origin cookie; extension pages use a bearer token.
     @app.get("/")
     def index():
-        response = FileResponse(ROOT / "extension" / "dashboard.html")
+        response = FileResponse(ROOT / "extension" / "study.html")
         response.set_cookie("scut_local", settings.data["token"], httponly=True, samesite="strict", path="/")
         return response
 
     @app.get("/{name}")
     def asset(name: str):
-        if name not in {"study.html", "study.js", "study.css", "study-tools.js", "study-actions.js", "study-conversation.js", "study-conversation.css", "study-runtime.js", "study-runtime.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
+        desktop_assets = {"desktop-entry.js", "desktop-entry.css", "start.html", "start.js"}
+        if name not in desktop_assets | {"study.html", "study.js", "study.css", "study-tools.js", "study-actions.js", "study-conversation.js", "study-conversation.css", "study-runtime.js", "study-runtime.css", "dashboard.html", "dashboard.js", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)
         response = FileResponse(ROOT / "extension" / name)
         if name.endswith(".html"):

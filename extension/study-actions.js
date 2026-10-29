@@ -11,7 +11,10 @@
     const signature=JSON.stringify(job);if(root.dataset.signature===signature)return;root.dataset.signature=signature;root.replaceChildren();
     root.className="operation-card";root.append(el("span",labels[job.tool]||"任务","fine"),el("p",job.message));
     const active=["queued","running","waiting_browser"].includes(job.status);
-    if(job.status==="waiting_browser")root.append(el("p","保持这门课的学校播放页打开。首次更新后，在扩展管理页重新加载 SCUT 课堂助手一次；以后会自动接收这里的任务。","fine"));
+    if(job.status==="waiting_browser"){
+      root.append(el("p","任务已保存。连接百步梯并打开这门课后，会自动继续。","fine"));
+      root.append(button("登录百步梯，继续处理 ↗",()=>document.dispatchEvent(new CustomEvent("study-connect-school",{detail:{course:job.course}}))));
+    }
     if(job.items?.length){const list=el("details");list.append(el("summary",`课时 / 文件明细 · ${job.items.length}`));for(const item of job.items){const row=el("div",undefined,"operation-item");row.append(el("strong",item.title||item.file),el("span",({ready:"已读取",pending:"待提交",queued:"后台处理中",done:"已完成",skipped:"已有结果，跳过",failed:"失败"})[item.status]||item.status));if(item.error)row.append(el("p",item.error));list.append(row);}root.append(list);}
     for(const file of job.files||[])root.append(button("下载 "+file.format.toUpperCase(),()=>download(job,file)));
     for(const ref of job.references||[]){const a=el("a",ref.title+" ↗");a.href=ref.url;a.target="_blank";a.rel="noreferrer noopener";root.append(a);}

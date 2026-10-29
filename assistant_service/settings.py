@@ -48,7 +48,9 @@ class Settings:
         # share a Windows-user vault across checkouts and application upgrades.
         self.vault = (vault_root or (root / "private" if root is not None else
                       Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SCUTClassroomAssistant")) / "credentials.json"
-        self.root = root or Path(os.getenv("SCUT_ASSISTANT_HOME", str(ROOT / ".local")))
+        default_root = (Path(os.getenv("LOCALAPPDATA", str(Path.home()))) / "SCUTClassroomAssistant" / "data"
+                        if (ROOT / "installed.json").is_file() else ROOT / ".local")
+        self.root = root or Path(os.getenv("SCUT_ASSISTANT_HOME", str(default_root)))
         self.root.mkdir(parents=True, exist_ok=True)
         self.path = self.root / "settings.json"
         pot = Path(os.getenv("APPDATA", str(Path.home()))) / "PotPlayerMini64"

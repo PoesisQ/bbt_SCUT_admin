@@ -38,3 +38,8 @@ study-providers.json
 *.sqlite3
 *.sqlite3-wal
 *.sqlite3-shm
+
+# Bundled distributions and desktop executables
+runtime/
+SCUT学习助手.exe
+installed.json
