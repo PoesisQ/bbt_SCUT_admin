@@ -75,3 +75,149 @@
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   root.CourseLibrary=api;
 })(globalThis);
+
+/* Theme-first reading. Original topic indexes remain the source of every action. */
+(() => {
+  "use strict";
+  const states = new Map();
+  const el = (tag, text, cls) => {
+    const node = document.createElement(tag);
+    if (text !== undefined) node.textContent = text;
+    if (cls) node.className = cls;
+    return node;
+  };
+  function sections(summary = {}) {
+    const topics = Array.isArray(summary.topics) ? summary.topics : [];
+    const groups = (Array.isArray(summary.groups) ? summary.groups : []).filter(g => g && typeof g.title === "string" && g.title.trim());
+    const result = groups.map((g, index) => ({
+      key: `group:${index}:${g.title}`, title: g.title, detail: g.detail || "", kind: "theme",
+      indices: [...new Set((Array.isArray(g.topic_indices) ? g.topic_indices : []).filter(i => Number.isInteger(i) && i >= 0 && i < topics.length && topics[i]))]
+    }));
+    const covered = new Set(result.flatMap(g => g.indices));
+    if (!result.length) {
+      const chapters = new Map();
+      topics.forEach((topic, index) => {
+        const title = typeof topic?.chapter === "string" ? topic.chapter.trim() : "";
+        if (!title) return;
+        if (!chapters.has(title)) chapters.set(title, {key: `chapter:${title}`, title, detail: "", kind: "chapter", indices: []});
+        chapters.get(title).indices.push(index); covered.add(index);
+      });
+      result.push(...chapters.values());
+    }
+    const remaining = topics.flatMap((topic, index) => topic && !covered.has(index) ? [index] : []);
+    if (remaining.length) result.push({key: "ungrouped", title: result.length ? "尚未归组的笔记" : "课堂笔记", detail: "", kind: "ungrouped", indices: remaining});
+    return result;
+  }
+  function matchingTopics(topics, query) {
+    const words = query.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+    return topics.flatMap((topic, index) => {
+      if (!topic) return [];
+      const text = [topic.title, topic.chapter, topic.detail].join(" ").toLocaleLowerCase();
+      return words.every(word => text.includes(word)) ? [index] : [];
+    });
+  }
+  function mount(root, record, {seek, compare, markdown}) {
+    const summary = record.summary || {}, topics = summary.topics || [], groups = sections(summary);
+    const key = record.id || "current";
+    if (!states.has(key)) states.set(key, {selected: "", mode: "read", query: "", opened: new Set(), sources: new Set()});
+    const state = states.get(key);
+    if (!groups.some(group => group.key === state.selected)) state.selected = groups[0]?.key || "";
+    const box = el("section", undefined, "lesson-reading");
+    box.setAttribute("aria-label", "按主题学习课程笔记");
+    const toolbar = el("div", undefined, "notes-toolbar"), modes = el("div", undefined, "notes-modes");
+    modes.setAttribute("role", "group"); modes.setAttribute("aria-label", "笔记阅读方式");
+    const button = (text, action, cls) => { const node = el("button", text, cls); node.type = "button"; node.onclick = action; return node; };
+    const readButton = button("按主题学习", () => switchMode("read"));
+    const findButton = button("查找分段笔记", () => switchMode("find"));
+    modes.append(readButton, findButton);
+    const themeCount = groups.filter(g => g.kind === "theme").length;
+    const chapterCount = groups.filter(g => g.kind === "chapter").length;
+    toolbar.append(modes, el("span", `${themeCount ? themeCount + " 个主题 · " : chapterCount ? chapterCount + " 个章节 · " : ""}${topics.filter(Boolean).length} 段原笔记${summary.partial ? " · 仍在整理" : ""}`, "notes-count"));
+    const reading = el("div", undefined, "notes-reading"), directory = el("nav", undefined, "notes-directory"), article = el("article", undefined, "notes-article");
+    directory.setAttribute("aria-label", "本课主题目录");
+    directory.append(el("h3", themeCount ? "本课主题" : chapterCount ? "本课章节" : "本课内容"));
+    const choices = [];
+    for (const [index, group] of groups.entries()) {
+      const choice = button(undefined, () => select(group.key), "notes-theme-choice");
+      choice.append(el("span", String(index + 1).padStart(2, "0"), "notes-order"), el("span", group.title));
+      choices.push([group.key, choice]); directory.append(choice);
+    }
+    if (!themeCount && topics.length) directory.append(el("p", summary.partial ? "主题还在整理，可先按已有章节或查找原笔记。" : "当前笔记没有主题概览，先按已有章节查看；分段原文均保留。", "notes-hint"));
+    reading.append(directory, article);
+    const finder = el("section", undefined, "notes-finder"), searchLabel = el("label", "在本课笔记中查找"), input = el("input"), count = el("p", undefined, "notes-count"), results = el("div", undefined, "notes-source-list");
+    input.type = "search"; input.placeholder = "搜索概念、公式或笔记中的内容"; input.value = state.query;
+    searchLabel.append(input); count.setAttribute("role", "status");
+    finder.append(searchLabel, count, results);
+    input.oninput = () => { state.query = input.value; renderSearch(); };
+    box.append(toolbar, reading, finder); root.append(box);
+
+    function topicNode(index, prefix) {
+      const topic = topics[index], note = el("details", undefined, "notes-source"), heading = el("summary", topic.title || `分段笔记 ${index + 1}`);
+      const openKey = JSON.stringify([prefix, index, topic.title, topic.start]);
+      note.id = `${prefix}-topic-${index}`; note.open = state.opened.has(openKey);
+      const actions = el("div", undefined, "notes-source-actions");
+      actions.append(seek(topic.start), button("课件 · 原话 · 笔记 ↗", () => compare(index)));
+      if (topic.chapter) actions.append(el("span", topic.chapter, "notes-count"));
+      note.append(heading, actions, markdown(topic.detail || ""));
+      note.addEventListener("toggle", () => {
+        if (!note.isConnected) return;
+        if (note.open) state.opened.add(openKey); else state.opened.delete(openKey);
+      });
+      return note;
+    }
+    function renderSearch() {
+      const indices = matchingTopics(topics, state.query);
+      count.textContent = state.query.trim() ? `找到 ${indices.length} / ${topics.filter(Boolean).length} 段笔记` : `全部 ${indices.length} 段笔记 · 按课堂记录顺序`;
+      results.replaceChildren(...indices.map(index => topicNode(index, "find")));
+      if (!indices.length) results.append(el("p", topics.length ? "没有找到匹配内容，试试更短的词或英文名称。" : "当前还没有分段笔记。", "notes-hint"));
+    }
+    function select(selectedKey, focus = false) {
+      state.selected = selectedKey;
+      const index = groups.findIndex(group => group.key === selectedKey), group = groups[index];
+      for (const [choiceKey, choice] of choices) {
+        choice.setAttribute("aria-current", choiceKey === selectedKey ? "true" : "false");
+      }
+      article.replaceChildren();
+      if (!group) {
+        article.append(markdown(summary.overview || "当前还没有可阅读的主题，笔记生成后会显示在这里。")); return;
+      }
+      const heading = el("h3", group.title); heading.tabIndex = -1;
+      article.append(el("p", `${group.kind === "theme" ? "主题" : group.kind === "chapter" ? "章节" : "笔记"} ${index + 1} / ${groups.length}`, "notes-position"), heading);
+      if (group.detail) article.append(markdown(group.detail));
+      else article.append(el("p", group.kind === "ungrouped" ? "这些笔记尚未形成主题概览，可展开阅读原文。" : "按原笔记的章节归在一起，展开查看具体讲述。", "notes-hint"));
+      if (group.indices.length) {
+        const sourceList = el("div", undefined, "notes-source-list");
+        sourceList.append(...group.indices.map(topicIndex => topicNode(topicIndex, "read")));
+        if (group.detail) {
+          const sources = el("details", undefined, "notes-sources"); sources.open = state.sources.has(group.key);
+          sources.append(el("summary", `展开本主题的原笔记 · ${group.indices.length} 段`), sourceList);
+          sources.addEventListener("toggle", () => {
+            if (!sources.isConnected) return;
+            if (sources.open) state.sources.add(group.key); else state.sources.delete(group.key);
+          });
+          article.append(sources);
+        } else article.append(sourceList);
+      } else article.append(el("p", "此主题没有关联分段，可通过“查找分段笔记”回查本课记录。", "notes-hint"));
+      if (groups.length > 1) {
+        const navigation = el("nav", undefined, "notes-pagination"); navigation.setAttribute("aria-label", "切换学习主题");
+        const previous = button("← 上一个主题", () => select(groups[index - 1].key, true));
+        const next = button("下一个主题 →", () => select(groups[index + 1].key, true));
+        previous.disabled = index === 0; next.disabled = index === groups.length - 1;
+        navigation.append(previous, next); article.append(navigation);
+      }
+      if (focus) { heading.focus({preventScroll: true}); heading.scrollIntoView({block: "nearest", behavior: "instant"}); }
+    }
+    function switchMode(mode) {
+      state.mode = mode; reading.hidden = mode !== "read"; finder.hidden = mode !== "find";
+      readButton.setAttribute("aria-pressed", String(mode === "read")); findButton.setAttribute("aria-pressed", String(mode === "find"));
+      if (mode === "find") { renderSearch(); input.focus({preventScroll: true}); }
+    }
+    select(state.selected);
+    // Refreshes retain the reader's place without moving keyboard focus.
+    reading.hidden = state.mode !== "read"; finder.hidden = state.mode !== "find";
+    readButton.setAttribute("aria-pressed", String(state.mode === "read")); findButton.setAttribute("aria-pressed", String(state.mode === "find"));
+    if (state.mode === "find") renderSearch();
+  }
+  globalThis.LectureNotes = {sections, matchingTopics, mount};
+  if (typeof module !== "undefined") module.exports.notes = globalThis.LectureNotes;
+})();
