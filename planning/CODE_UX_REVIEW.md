@@ -12,6 +12,8 @@
 
 对应回归见 `extension/study-conversation.test.js`、`extension/courseware-import.test.js`、`tests/test_study_recovery.py`、`tests/test_material_identity.py`。下方 F01、F02、F03、F05 的复现记录描述的是修复前行为，其余改进项仍待实施。
 
+2026-11-06 前端改进：F09 的固定时长问题已修正。顶部入口、首页快捷操作和待办提示统一先打开时长选择，可选 15 / 30 / 60 分钟或自定义 1–240 分钟；确认后才请求清单，本标签页记住上次提交的时长。取消不请求模型、不修改草稿或附件。已有清单仍留在对话中，尚未新增独立的历史清单列表；跨页面命名统一也未包含在这次修改内。浏览器与回归证据见 [FRONTEND_REVIEW.md](FRONTEND_REVIEW.md)。
+
 ### 修复后验证
 
 - 新增 23 项回归，覆盖草稿隔离、发送中编辑、响应丢失及刷新后重试、并发重复请求、暂停恢复、四种入口的资料身份、旧指纹兼容、显式替换与历史引用。
@@ -138,6 +140,8 @@ P1 表示应先修复的误操作或重复执行问题；P2 表示高频流程�
 位置：[library-core.js](../extension/library-core.js) 的 `lessons()` / `groups()`、[storage.py](../assistant_service/study_agent/storage.py#L108)、[courseware_api.py](../assistant_service/courseware_api.py#L35)、[study.html](../extension/study.html) 的文件夹导入表单。
 
 ## F09：今日清单和入口命名需要符合实际动作
+
+以下为修复前观察。2026-11-06 已实现可见、可修改的时长选择；历史清单独立入口和跨页面命名统一仍待实施。
 
 顶部“今日清单”实际立即发送固定消息“今晚只有30分钟，先学什么？”，并不是打开现有清单。该动作也不读取复习偏好中的每日时间。30 分钟可以是首次默认值，但需要在操作前可见、可修改。
 

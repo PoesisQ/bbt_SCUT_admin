@@ -17,7 +17,7 @@
   function switchView(name){$("workspace-dialog").showModal();document.querySelectorAll(".view").forEach(n=>n.hidden=n.id!=="view-"+name);document.querySelectorAll("[data-view]").forEach(n=>n.setAttribute("aria-pressed",String(n.dataset.view===name)));}
   document.querySelectorAll("[data-view]").forEach(n=>n.addEventListener("click",()=>switchView(n.dataset.view)));
   async function load(){
-    const old=course();state=await A.api("/api/study/overview");$("connection").textContent="本地已连接";$("onboarding").textContent=state.onboarding;
+    const old=course();state=await A.api("/api/study/overview");$("connection").textContent="本地已连接";$("connection").dataset.state="connected";$("onboarding").textContent=state.onboarding;
     $("course").replaceChildren();const automatic=el("option","由对话识别课程");automatic.value="";$("course").append(automatic);$("course-names").replaceChildren();
     for(const name of state.courses){const option=el("option",name);option.value=name;$("course").append(option);const hint=el("option");hint.value=name;$("course-names").append(hint);}
     if(state.courses.includes(old))$("course").value=old;
@@ -84,5 +84,5 @@
   $("collect-visuals").addEventListener("click",()=>act($("collect-visuals"),async()=>{if(!course())throw new Error("先选择要关联的课程");const result=await A.send("COLLECT_VISUAL_EVIDENCE",{tabId:Number($("visual-tab").value)});const saved=await post("/visuals",{...result,course:course()});$("visual-list").replaceChildren(el("p",`${saved.title} · 已保存 ${saved.items.length} 张带时间的截图索引`));for(const item of saved.items.slice(0,8)){const a=el("a",timecode(item.seconds)+" 查看原图 ↗","cite");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";$("visual-list").append(a);}}));
   globalThis.StudyTools={load,switchView,showEvidence,state:()=>state};
   $("close-workspace").addEventListener("click",()=>$("workspace-dialog").close());
-  load().catch(e=>{$("connection").textContent="本地未连接";notify(e.message);});tabs().catch(()=>{});
+  load().catch(e=>{$("connection").textContent="本地未连接";$("connection").dataset.state="offline";notify(e.message);});tabs().catch(()=>{});
 })();

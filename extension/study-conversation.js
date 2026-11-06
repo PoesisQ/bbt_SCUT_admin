@@ -30,6 +30,9 @@
   function menuClose() { $("tools-menu").close(); }
   $("open-tools").addEventListener("click", () => $("tools-menu").showModal());
   $("close-tools").addEventListener("click", menuClose);
+  $("tools-menu").addEventListener("click", e => {
+    if (e.target.closest("#open-library, #open-runtime, #school-entry, #sync")) menuClose();
+  }, true);
   document.querySelectorAll("[data-open]").forEach(b => b.addEventListener("click", () => { menuClose(); T.switchView(b.dataset.open); }));
   $("close-review").addEventListener("click", () => $("review-dialog").close());
   document.addEventListener("study-open-image", e => { $("evidence-dialog").close(); openImage(e.detail).catch(error => notice(error.message)); });
@@ -40,7 +43,7 @@
     if (hasDraft() && remembered !== null && [...$("course").options].some(option => option.value === remembered)) $("course").value = remembered;
     if (!hasDraft() && !$("course").value && home.course) $("course").value = home.course;
     $("model-note").textContent = s.provider.configured
-      ? `${s.provider.model}${s.provider.vision ? " · 支持图片" : " · 当前仅文字"} · 发送时使用相关摘录与所选图片，记录保存在本机`
+      ? `${s.provider.model}${s.provider.vision ? " · 支持图片" : " · 当前仅文字"} · 发送时使用相关摘录与所选图片`
       : "模型尚未连接。可以先发送资料，或到设置中保存 Key。";
     $("onboarding").textContent = s.sources.length ? `已索引 ${s.sources.length} 份资料与课堂记录。` : "添加资料或同步课堂记录后，可以按课程提问。";
   });
@@ -98,7 +101,11 @@
     $("pending-badge").textContent = home.pending_count || "";
   }
   function renderDialogue() {
-    const root = $("conversation"); root.replaceChildren(); $("welcome").hidden = home.turns.length > 0;
+    const root = $("conversation"); root.replaceChildren();
+    const hasConversation = home.turns.length > 0;
+    $("welcome").hidden = hasConversation;
+    $("starters").hidden = hasConversation;
+    shell.classList.toggle("has-conversation", hasConversation);
     for (const turn of home.turns) {
       const pair = el("article", undefined, "exchange"), user = el("div", undefined, "user-message");
       if (turn.course) user.append(el("span", turn.course, "course-label")); user.append(el("p", turn.question));
@@ -207,8 +214,38 @@
     }
   }
   async function today() {
-    return send("今晚只有30分钟，先学什么？", {course:"", purpose:"today"});
+    const stored = Number(sessionStorage.getItem("study-today-minutes"));
+    const minutes = Number.isInteger(stored) && stored >= 1 && stored <= 240 ? stored : 30;
+    const preset = [15, 30, 60].includes(minutes) ? String(minutes) : "custom";
+    for (const radio of document.querySelectorAll('input[name="today-budget"]')) radio.checked = radio.value === preset;
+    $("today-minutes").value = String(minutes);
+    $("custom-minutes-field").hidden = preset !== "custom";
+    $("today-minutes").required = preset === "custom";
+    $("today-minutes").disabled = preset !== "custom";
+    $("today-error").hidden = true;
+    $("today-dialog").showModal();
   }
+  $("close-today").addEventListener("click", () => $("today-dialog").close());
+  $("today-form").addEventListener("change", () => {
+    const custom = document.querySelector('input[name="today-budget"]:checked')?.value === "custom";
+    $("custom-minutes-field").hidden = !custom;
+    $("today-minutes").required = custom;
+    $("today-minutes").disabled = !custom;
+    $("today-error").hidden = true;
+  });
+  $("today-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const selected = document.querySelector('input[name="today-budget"]:checked')?.value;
+    const minutes = Number(selected === "custom" ? $("today-minutes").value : selected);
+    if (sending || !Number.isInteger(minutes) || minutes < 1 || minutes > 240) {
+      $("today-error").textContent = sending ? "上一条消息正在处理，稍后再安排今天的清单。" : "请填写 1–240 之间的整数分钟。";
+      $("today-error").hidden = false;
+      return;
+    }
+    sessionStorage.setItem("study-today-minutes", String(minutes));
+    $("today-dialog").close();
+    await send(`今天有 ${minutes} 分钟，结合已确认的任务和复习记录，帮我安排今日清单。`, {course: "", purpose: "today"});
+  });
   $("open-today").addEventListener("click", () => today().catch(e => notice(e.message)));
   document.querySelectorAll("[data-starter]").forEach(b => b.addEventListener("click", () => { if (b.dataset.intent === "today") today().catch(e => notice(e.message)); else if (hasDraft()) { notice("输入框中还有草稿，请先发送或整理好当前内容。"); $("question").focus(); } else { $("question").value = b.dataset.starter; sessionStorage.setItem("study-draft-text", $("question").value); $("question").focus(); } }));
   async function send(text, options = {}) {
