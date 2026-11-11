@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from .concepts import expand_query, normal
 from .context import pack_evidence
+from .knowledge import NOISY
+from .research import source_family
 from .storage import ALIASES, terms
 
 SEARCH_BUDGET = 16000
@@ -52,18 +54,21 @@ def retrieve_evidence(store, query, course, limit):
         for item in store.search(expanded["expanded_query"], name, max(24, limit)):
             score = _match(item, variants, fallback)
             if score[0]:
-                hits.append((score, item))
+                provenance = (int(bool(item.get("policy", {}).get("trusted"))),
+                              int(item["kind"] not in NOISY), int(item["kind"] == "school_subtitle"))
+                hits.append((score, provenance, item))
 
     # Diversity may break ties at the same relevance tier, never beat stronger text.
-    hits.sort(key=lambda pair: (*(-part for part in pair[0]), pair[1]["id"]))
+    hits.sort(key=lambda row: row[2]["id"])
+    hits.sort(key=lambda row: (row[0][:2], row[1], row[0][2]), reverse=True)
     seen, ranked = set(), []
-    for score, item in hits:
-        key = (score[:2], item["source_id"])
+    for score, provenance, item in hits:
+        key = (score[:2], source_family(item))
         repeated = key in seen
         seen.add(key)
         basis = "phrase" if score[0] == 3 else "text" if score[0] == 2 else "title" if score[1] else "generic_alias"
         matched = {"basis": basis, "coverage": round(score[1], 3), "matched_terms": score[2]}
-        ranked.append(((*score[:2], not repeated, score[2]), {**item, "query_match": matched}))
+        ranked.append(((*score[:2], not repeated, *provenance, score[2]), {**item, "query_match": matched}))
     ranked.sort(key=lambda pair: pair[0], reverse=True)
     return [item for _, item in ranked[:limit]], terminology, len(hits)
 

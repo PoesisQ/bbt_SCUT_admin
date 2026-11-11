@@ -21,6 +21,13 @@ _request_locks = WeakValueDictionary()
 _request_guard = threading.Lock()
 
 
+def request_fingerprint(payload):
+    values = [payload[key] for key in ("conversation", "course", "question", "purpose", "attachments", "review_id")]
+    if payload.get("practice_id"):
+        values.append(payload["practice_id"])
+    return digest(values)
+
+
 def serialized_request(fn):
     @wraps(fn)
     def call(store, provider, root, **kwargs):
@@ -38,8 +45,7 @@ def completed_request(store, payload):
         old = store.get(tid, "turn")
     except KeyError:
         return None
-    fingerprint = digest([payload["conversation"], payload["course"], payload["question"],
-                          payload["purpose"], payload["attachments"], payload["review_id"]])
+    fingerprint = request_fingerprint(payload)
     if old["request"] != fingerprint:
         raise ValueError("同一条消息的内容已改变，请重新发送")
     return public_turn(old, store) if old["status"] == "ready" else None
@@ -48,10 +54,8 @@ def completed_request(store, payload):
 def public_turn(turn, store=None):
     result = dict(turn.get("result", {}))
     if store and result.get("exercise"):
-        practice = store.get(result["exercise"]["id"], "practice")
-        if practice.get("attempts"):
-            result["exercise"] = {**result["exercise"], "expected_answer": practice["expected_answer"],
-                                  "last_attempt": practice["attempts"][-1]}
+        from .practice import practice_view
+        result["exercise"] = practice_view(store, store.get(result["exercise"]["id"], "practice"))
     return {k: v for k, v in turn.items() if k != "result"} | {"result": {
         k: v for k, v in result.items() if k not in {"evidence"}}}
 
@@ -61,6 +65,8 @@ def turns(store, conversation):
 
 
 def home(store, conversation="main", now=None):
+    from .practice import recent_practices
+
     now = time.time() if now is None else now
     history = turns(store, conversation)
     courses = sorted({s["course"] for s in store.sources()} | {t["course"] for t in store.list("task")})
@@ -70,7 +76,7 @@ def home(store, conversation="main", now=None):
         "course": next((t["course"] for t in reversed(history) if t.get("course")), ""),
         "reviews": reviews, "due": [r for r in reviews if r["today"]], "review_preferences": preferences(store),
         "paused_reviews": [r for r in store.list("review") if r.get("status") == "paused"],
-        "operations": store.list("operation")[:30],
+        "operations": store.list("operation")[:30], "recent_practices": recent_practices(store),
         "alerts": [a for a in store.list("study_alert") if not a.get("handled")],
         "task_count": len(tasks), "source_count": len(store.sources()),
         "pending_count": sum(p.get("status") == "pending" for p in store.list("proposal"))}
@@ -78,11 +84,14 @@ def home(store, conversation="main", now=None):
 
 @serialized_request
 @traced("chat")
-def converse(store, provider, root, *, conversation, client_id, course, question, purpose="auto", attachments=None, review_id=None, operations=None):
+def converse(store, provider, root, *, conversation, client_id, course, question, purpose="auto", attachments=None,
+             review_id=None, practice_id=None, operations=None):
     attachments = attachments or []
     request_input = dict(conversation=conversation, client_id=client_id, course=course, question=question,
                          purpose=purpose, attachments=attachments, review_id=review_id)
-    request = digest([conversation, course, question, purpose, attachments, review_id])
+    if practice_id:
+        request_input["practice_id"] = practice_id
+    request = request_fingerprint(request_input)
     tid = digest(["turn", conversation, client_id])[:32]
     try:
         old = store.get(tid, "turn")
@@ -90,7 +99,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
             raise ValueError("同一条消息的内容已改变，请重新发送")
         if old["status"] == "ready":
             emit("cache.hit", "消息已处理，返回原有回答", {"cache":"request_id", "original_trace":old.get("trace_id")})
-            return public_turn(old)
+            return public_turn(old, store)
     except KeyError:
         old = None
     history = turns(store, conversation)
@@ -110,7 +119,7 @@ def converse(store, provider, root, *, conversation, client_id, course, question
                 course = named
     if ambiguous:
         course = ""
-    if len(mentioned) == 1:
+    if len(mentioned) == 1 and not practice_id:
         course = mentioned[0]
     if not course and history and not ambiguous:
         course = next((t["course"] for t in reversed(history) if t.get("course")), "")
@@ -155,10 +164,32 @@ def converse(store, provider, root, *, conversation, client_id, course, question
                     item = store.evidence(c["evidence_id"])
                     if item["course"] == course and item["active"]:
                         focus.append(item)
+        practice_topic = ""
+        practice_session = {}
+        if practice_id and purpose == "practice":
+            from .practice import practice_for_request, practice_view
+
+            parent = practice_view(store, store.get(practice_id, "practice"))
+            if parent["course"] != course or parent["status"] == "paused":
+                raise ValueError("请先恢复对应课程的练习")
+            existing = practice_for_request(store, "web-" + tid)
+            if not existing and parent["session_id"]:
+                session = store.get(parent["session_id"], "learning_session")
+                if session.get("practice_id") != practice_id:
+                    raise ValueError("这道题已经有后续练习，请先打开最新一题")
+                practice_session = {"session_id": session["id"], "expected_revision": session["revision"]}
+            practice_topic = parent["topic"]
+            if parent.get("last_attempt"):
+                previous.append({"question": parent["question"], "student_answer": parent["last_attempt"]["answer"][:1600]})
+            if not parent["source_stale"]:
+                focus = [store.evidence(c["evidence_id"]) for c in parent["citations"]] + focus
         if review_id:
             review = store.get(review_id, "review")
             if review["course"] != course:
                 raise ValueError("这条复习属于另一门课，请先切换课程")
+            if review["status"] == "paused":
+                raise ValueError("请先恢复这项间隔复习")
+            practice_topic = review["topic"]
             for c in review.get("citations", [])[:4]:
                 item = store.evidence(c["evidence_id"])
                 if item["active"]:
@@ -168,7 +199,9 @@ def converse(store, provider, root, *, conversation, client_id, course, question
                 "connect" if any(s in question for s in ("串联", "联系", "关联", "前置知识")) else (
                 "summary" if any(s in question for s in ("深入总结", "完整总结", "梳理整章")) else "ask"))
         result = run_agent(store, provider, course=course, question=question, purpose=purpose,
-                           history=previous, focus=focus, max_steps=2 if images else 3)
+                           history=previous, focus=focus, max_steps=2 if images else 3,
+                           practice_request_id="web-" + tid, practice_review_id=review_id or "",
+                           practice_topic=practice_topic, practice_session=practice_session)
         result["input_images"] = images
         result.pop("evidence", None)
         return public_turn(store.save("turn", {**turn, "purpose": purpose, "status": "ready", "result": result}, tid))

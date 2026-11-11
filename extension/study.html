@@ -31,6 +31,7 @@
   </div>
 </header>
 <main class="conversation-shell">
+  <div data-workbuddy-entry></div>
   <section id="gentle-next" class="gentle-next" hidden aria-label="接下来的小事"></section>
   <div id="notice" role="status" hidden></div>
   <section id="conversation" class="conversation" aria-label="学习对话" aria-live="polite"></section>
@@ -134,5 +135,9 @@
 <dialog id="review-dialog" aria-labelledby="review-title"><div class="section-head"><h2 id="review-title">复习安排</h2><button id="close-review" aria-label="关闭复习安排">×</button></div><p class="subtle">根据作答反馈、间隔和本课任务排序。可直接说“每天复习 15 分钟，晚上 8 点”。来源更新后先核对再复习。</p><div id="review-list"></div><p class="fine">本地服务运行时会持续检查；已配对并启用手机提醒时同步送达。22:00–08:00 不推送，每天最多两条复习提醒；离线积累不会逐条补发。</p></dialog>
 <datalist id="course-names"></datalist><dialog id="library-dialog" aria-labelledby="library-title"><div class="section-head"><h2 id="library-title">添加本地资料</h2><button id="close-library" aria-label="关闭">×</button></div><p class="subtle">只读原文件。先预览，再选择要导入的资料。</p><form id="library-form"><label>这是什么课程？<input id="library-course" list="course-names" required placeholder="与课堂记录使用同一个课程名称"></label><label>资料文件夹路径<input id="library-root" required placeholder="粘贴本机课程资料文件夹路径"></label><button type="submit">预览可读取的文件</button></form><div id="file-list"></div><div class="dialog-actions"><button id="preview-timetable" disabled>识别所选课表 PDF</button><button id="import-files" class="primary" disabled>导入勾选资料</button></div><p id="import-result" role="status" class="fine"></p></dialog>
 <dialog id="evidence-dialog" aria-labelledby="evidence-title"><div class="section-head"><h2 id="evidence-title">原文</h2><button id="close-evidence" aria-label="关闭">×</button></div><p id="evidence-location" class="subtle"></p><pre id="evidence-text"></pre></dialog>
+<dialog id="shared-practice-dialog" aria-labelledby="shared-practice-title">
+  <div class="section-head"><h2 id="shared-practice-title">继续练习</h2><button id="close-shared-practice" aria-label="关闭练习">×</button></div>
+  <div id="shared-practice-content"></div>
+</dialog>
 
-<script src="client.js"></script><script src="ui.js"></script><script src="study-tools.js"></script><script src="study-actions.js"></script><script src="study-specialized.js"></script><script src="study-conversation.js"></script><script src="study-runtime.js"></script><script src="desktop-entry.js"></script></body></html>
+<script src="client.js"></script><script src="ui.js"></script><script src="study-tools.js"></script><script src="study-actions.js"></script><script src="study-specialized.js"></script><script src="study-conversation.js"></script><script src="study-runtime.js"></script><script src="desktop-entry.js"></script><script src="workbuddy-entry.js"></script></body></html>

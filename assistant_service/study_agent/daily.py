@@ -7,6 +7,7 @@ from datetime import datetime
 
 from .learning import preferences, review_candidates
 from .planner import TZ
+from .practice import current_sources
 from .storage import terms
 from .tutoring import learning_gaps
 from ..telemetry import emit
@@ -37,19 +38,6 @@ def requested_minutes(question):
     if not 1 <= value <= 240:
         raise ValueError("一次安排 1–240 分钟即可；更长的计划可在任务与日历中安排。")
     return value
-
-
-def _current_citations(store, citations):
-    if not citations:
-        return False
-    for c in citations:
-        try:
-            e = store.evidence(c["evidence_id"])
-            if not e["active"] or e.get("policy", {}).get("excluded"):
-                return False
-        except KeyError:
-            return False
-    return True
 
 
 def _related(a, b):
@@ -91,7 +79,8 @@ def daily_plan(store, minutes=30, course="", now=None):
             "action": "先检查提交要求和已有进度，再做下一小步；时间到时记录卡点。" if days is None or days >= 0 else "先核对补交安排，再决定是否继续投入。"})
     reviews = [r for r in review_candidates(store, now) if not course or r["course"] == course]
     for review in reviews:
-        if review.get("source_stale") or not _current_citations(store, review.get("citations", [])):
+        citations = review.get("citations", [])
+        if review.get("source_stale") or (citations and not current_sources(store, review["course"], citations)):
             blocked.append({"course": review["course"], "title": review["topic"], "reason": "原文已更新、停用或缺失，先核对来源。"})
             continue
         attempts = review.get("attempts", [])
@@ -109,31 +98,40 @@ def daily_plan(store, minutes=30, course="", now=None):
             "title": review["topic"], "priority": score, "minutes": review["minutes"], "reasons": reasons,
             "citations": review.get("citations", []), "mode": review["mode"],
             "action": "先不看资料解释关键条件，再做一道题，最后对照原文检查。"})
-    # Weak answers also count before the student explicitly creates a spaced-review card.
-    practices, all_reviews = store.list("practice"), store.list("review")
+    # WorkBuddy and web attempts both enter through the same practice records.
+    practices = [p for p in store.list("practice") if not course or p["course"] == course]
+    all_reviews = store.list("review")
+    paused_sessions = {s["id"] for s in store.list("learning_session") if s["status"] == "paused"}
+    recent = []
     for p in practices:
-        if course and p["course"] != course or not p.get("attempts"):
+        last = next((a for a in reversed(p.get("attempts", [])) if a.get("rating") is not None), None)
+        if not last:
             continue
-        last = p["attempts"][-1]
+        if not current_sources(store, p["course"], p.get("citations", [])):
+            continue
         feedback = last.get("feedback") or {}
         rating = min(last["rating"], feedback.get("suggested_rating", 4)) if feedback.get("status") == "model_checked" else last["rating"]
-        if rating > 2 or now - last.get("at", now) > 30 * 86400:
+        recent.append((p, p.get("topic") or p["question"], last.get("at", now), rating))
+    for p, topic, attempted_at, rating in recent:
+        attempted_today = local.date() == datetime.fromtimestamp(attempted_at, TZ).date()
+        due = 0 < (p.get("due_at") or 0) <= now
+        if not (due or rating <= 2 and attempted_today) or p.get("session_id") in paused_sessions:
             continue
-        if any(r.get("source") == p["id"] or (r["course"] == p["course"] and _related(r["topic"], p["question"])) for r in all_reviews):
+        if any(r["id"] == p.get("review_id") or r.get("source") == p["id"]
+               or (r["course"] == p["course"] and _related(r["topic"], topic)) for r in all_reviews):
             continue
-        # A later attempt on the same topic supersedes an older weak answer for
-        # prioritisation. This is not a claim of objective mastery.
-        if any(other["id"] != p["id"] and other["course"] == p["course"] and other.get("attempts")
-               and other["attempts"][-1].get("at", 0) > last.get("at", 0)
-               and _related(other["question"], p["question"])
-               and {c["evidence_id"] for c in other.get("citations", [])} & {c["evidence_id"] for c in p.get("citations", [])}
-               for other in practices):
+        ids = {c["evidence_id"] for c in p["citations"]}
+        if any(other["course"] == p["course"] and other_at > attempted_at
+               and ((p.get("topic_key") and p["topic_key"] == other.get("topic_key"))
+                    or (_related(topic, other_topic) and ids.intersection(c["evidence_id"] for c in other["citations"])))
+               for other, other_topic, other_at, _ in recent):
             continue
-        if not _current_citations(store, p.get("citations", [])):
-            continue
-        candidates.append({"kind": "practice", "id": p["id"], "course": p["course"], "title": p["question"],
-            "priority": 74, "minutes": 8, "reasons": ["这道题上次还没弄清楚（依据作答反馈或自评）"],
-            "citations": p["citations"], "action": "针对刚才没讲清的条件换一道基础题，再回到原问题。" if local.date() == datetime.fromtimestamp(last.get("at", now), TZ).date() else "重述题目条件，试着独立作答，再核对上次遗漏的地方。"})
+        candidates.append({"kind": "practice", "id": p["id"], "practice_id": p["id"],
+            "session_id": p.get("session_id"), "course": p["course"], "title": topic,
+            "priority": 74 if rating <= 2 else 55, "minutes": 8 if rating <= 2 else 5,
+            "reasons": ["这道题上次还没弄清楚（依据作答反馈或自评）" if rating <= 2 else "已到间隔复习时间"],
+            "citations": p["citations"], "action": ("针对刚才没讲清的条件核对原文，再做一道变式题。"
+                if attempted_today and rating <= 2 else "先回忆关键条件，再用新情境检验一次。")})
     # WorkBuddy checkpoints carry student self-report, never an automatic grade.
     # Existing spaced reviews own their schedule (including snoozes); do not add
     # the same topic back through a second channel.
@@ -142,13 +140,17 @@ def daily_plan(store, minutes=30, course="", now=None):
             continue
         if any(c["course"] == gap["course"] and _related(c["title"], gap["topic"]) for c in candidates):
             continue
+        if any(p["course"] == gap["course"] and at >= gap["at"]
+               and (p.get("topic_key") == gap["topic_key"] or _related(topic, gap["topic"]))
+               for p, topic, at, _ in recent):
+            continue
         candidates.append({"kind": "learning_gap", "id": gap["id"], "session_id": gap["session_id"],
             "course": gap["course"], "title": gap["topic"], "priority": 74, "minutes": 8,
             "reasons": ["你在最近的学习会话中表示仍有卡点（自评，不是自动判分）"],
             "citations": gap["citations"], "action": "接着上次的问题试讲关键条件，再对照原文做一道变式题。"})
     calibration = False
     has_learning_feedback = any(not course or t["course"] == course for t in store.list("learning_topic"))
-    if not candidates and not reviews and not store.list("practice") and not has_learning_feedback:
+    if not candidates and not reviews and not practices and not has_learning_feedback:
         # Cold start: do not label a random recent topic as a weakness. One short
         # diagnostic gives the learner something to do without a setup questionnaire.
         sources = store.sources(course)

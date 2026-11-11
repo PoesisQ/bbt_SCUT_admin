@@ -122,7 +122,7 @@ def classroom_evidence(store, course, query, limit=8):
         if not exact and overlap < .6:
             continue
         ranked.append((int(exact) * 2 + overlap, e))
-    ranked.sort(key=lambda v: (-v[0], v[1]["title"], v[1]["id"]))
+    ranked.sort(key=lambda v: (-v[0], v[1]["kind"] != "school_subtitle", v[1]["title"], v[1]["id"]))
     # One first match per lesson before returning extra moments from the same lesson.
     first, extra, seen_lessons, seen_moments = [], [], set(), set()
     for _, e in ranked:
@@ -130,7 +130,9 @@ def classroom_evidence(store, course, query, limit=8):
         lesson = (meta.get("course_id"), meta.get("sub_id")) if meta.get("sub_id") else e["title"]
         excerpt = _excerpt(e, variants)
         position = location(e, excerpt)
-        moment = (str(lesson), position["time_basis"], int((position["start"] or 0) // 30))
+        # Versions of the same moment can disagree on a condition or negation.
+        # Collapse duplicate quotations while keeping different wording visible.
+        moment = (str(lesson), position["time_basis"], int((position["start"] or 0) // 30), " ".join(excerpt.split()))
         if moment in seen_moments:
             continue
         seen_moments.add(moment)

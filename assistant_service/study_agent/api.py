@@ -11,7 +11,7 @@ from fastapi.responses import Response, FileResponse
 from pydantic import Field, field_validator, model_validator
 
 from . import ingest
-from .planner import calendar, make_plan, review_interval, stamp
+from .planner import calendar, make_plan, stamp
 from .reasoner import Provider, Strict, run_agent
 from .storage import StudyStore, digest
 from .attachments import accept_attachment, attachment_path
@@ -20,6 +20,7 @@ from .reviews import create_review, update_review
 from .operations import OperationQueue, choose_operation
 from .knowledge import catalog, set_policy, remember_claim
 from .learning import answer_feedback
+from .practice import change_practice_state, practice_view, submit_attempt
 from .daily import daily_plan, is_daily_question
 from .classroom_search import find_classroom_mentions, location
 from .timetable import expand_timetable, extract_timetable
@@ -49,6 +50,7 @@ class Chat(Strict):
     purpose: Literal["auto", "ask", "verify", "requirements", "practice", "connect", "summary", "classroom", "today"] = "auto"
     attachments: list[str] = Field(default_factory=list, max_length=4)
     review_id: str | None = Field(default=None, max_length=80)
+    practice_id: str | None = Field(default=None, max_length=80)
 
 
 class ReviewCreate(Strict):
@@ -134,8 +136,16 @@ class Plan(Strict):
 
 class Attempt(Strict):
     answer: str = Field(min_length=1, max_length=3000)
-    rating: int = Field(ge=1, le=4)
+    rating: int | None = Field(default=None, ge=1, le=4)
     review_id: str | None = Field(default=None, max_length=80)
+    request_id: str = Field(default="", max_length=80)
+    expected_revision: int | None = Field(default=None, ge=0)
+
+
+class PracticeState(Strict):
+    action: Literal["pause", "resume"]
+    request_id: str = Field(min_length=1, max_length=80)
+    expected_revision: int = Field(ge=0)
 
 
 class SourcePolicy(Strict):
@@ -528,23 +538,28 @@ def router(settings, classroom_store):
         return Response(calendar(study.get(pid, "plan")), media_type="text/calendar; charset=utf-8",
                         headers={"Content-Disposition": 'attachment; filename="study-plan.ics"'})
 
+    @api.get("/practice/{pid}")
+    def get_practice(pid: str):
+        return practice_view(study, study.get(pid, "practice"))
+
+    @api.post("/practice/{pid}/state")
+    def practice_state(pid: str, body: PracticeState):
+        return change_practice_state(study, pid, **body.model_dump())
+
     @api.post("/practice/{pid}/attempt")
     def practice(pid: str, body: Attempt):
         item = study.get(pid, "practice")
-        review = study.get(body.review_id, "review") if body.review_id else None
-        if review and review["course"] != item["course"]:
-            raise ValueError("这次作答与复习课程不匹配")
-        feedback = {"status": "unavailable", "summary": "模型正忙，先保存本次思路与自评。", "missing": []}
-        if model_gate.acquire(blocking=False):
-            try: feedback = answer_feedback(study, provider, item, body.answer)
-            finally: model_gate.release()
-        days = review_interval(item["attempts"], body.rating)
-        item["attempts"].append({**body.model_dump(), "at": time.time(), "feedback": feedback})
-        item.update(due_at=time.time() + days * 86400, assessment="学生自评，尚非客观掌握度")
-        result = study.save("practice", item, pid)
-        if review:
-            result["review"] = update_review(study, review["id"], action="complete", rating=body.rating, feedback=feedback)
-        return result
+        feedback = None
+        retry = body.request_id and any(a.get("request_id") == body.request_id for a in item.get("attempts", []))
+        view = practice_view(study, item)
+        if (item.get("origin", "web") == "web" and not retry and view["status"] != "paused" and not view["source_stale"]
+                and body.expected_revision in {None, view["revision"]} and model_gate.acquire(blocking=False)):
+            try:
+                feedback = answer_feedback(study, provider, item, body.answer)
+            finally:
+                model_gate.release()
+        result = submit_attempt(study, pid, **body.model_dump(), feedback=feedback)
+        return {**result, "attempts": study.get(pid, "practice")["attempts"]}
 
     @api.post("/visuals")
     def visuals(body: Visuals):

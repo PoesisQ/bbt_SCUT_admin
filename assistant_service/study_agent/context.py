@@ -31,6 +31,8 @@ def history_context(history,question,budget=2000):
         item={"question":row.get("question","")[:280]}
         if i<2:
             item["answer"]=row.get("answer","")[:650]
+            if row.get("student_answer"):
+                item["student_answer"] = row["student_answer"][:650]
             if row.get("next_question"):item["next_question"]=row["next_question"][:160]
         size=len(json.dumps(item,ensure_ascii=False))
         if used+size>budget:break

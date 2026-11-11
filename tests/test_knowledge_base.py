@@ -160,7 +160,7 @@ class KnowledgeBaseTests(unittest.TestCase):
             return server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                   "params": {"name": name, "arguments": args}})
 
-        self.assertEqual(len(TOOLS), 23)
+        self.assertEqual(len(TOOLS), 25)
         names = {tool["name"] for tool in TOOLS}
         self.assertIn("search_knowledge_base", names)
         self.assertIn("prepare_quiz", names)

@@ -16,7 +16,7 @@ from .concepts import topic_key, catalog as concept_catalog
 from .index_state import index_status
 from .knowledge_base import retrieve_evidence
 
-VERSION = "0.5.4"
+VERSION = "0.6.0"
 MAX_CONTEXT = 16000
 
 
@@ -193,10 +193,15 @@ def session_view(store, session_id):
                          "answer_origin": "student_report" if step.get("student_answer") else "not_provided",
                          "rating_origin": "student_self_report" if step.get("self_rating") else "not_provided",
                          "next_question_origin": "assistant_suggestion"})
-    return {k: item[k] for k in ("id", "course", "goal", "language", "revision", "status", "updated_at")} | {
+    value = {k: item[k] for k in ("id", "course", "goal", "language", "revision", "status", "updated_at")} | {
         "teaching_mode": item.get("teaching_mode", "interactive"),
         "recent_steps": recent, "stale_evidence_ids": sorted(stale),
         "needs_source_refresh": bool(stale), "knowledge_confirmed": False}
+    if item.get("practice_id"):
+        from .practice import practice_view
+        value["practice"] = practice_view(store, store.get(item["practice_id"], "practice"))
+        value["needs_source_refresh"] |= value["practice"]["source_stale"]
+    return value
 
 
 def get_session(store, course="", session_id=""):
@@ -225,12 +230,14 @@ def get_session(store, course="", session_id=""):
 
 
 def record_progress(store, session_id, request_id, expected_revision, topic, evidence_ids,
-                    question="", student_answer="", self_rating=None, next_question="", action="checkpoint", teaching_mode=""):
+                    question="", student_answer="", self_rating=None, next_question="", action="checkpoint", teaching_mode="",
+                    *, practice_id=""):
     if teaching_mode not in {"", "interactive", "explain"}:raise ValueError("教学方式须为interactive或explain")
     event_id = "step-" + digest([session_id, request_id])[:32]
     payload = {"topic": topic, "evidence_ids": list(dict.fromkeys(evidence_ids)), "question": question,
                "student_answer": student_answer, "self_rating": self_rating, "next_question": next_question, "action": action}
     if teaching_mode:payload["teaching_mode"]=teaching_mode
+    if practice_id:payload["practice_id"]=practice_id
     signature = digest(payload)
     with store.connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -242,6 +249,8 @@ def record_progress(store, session_id, request_id, expected_revision, topic, evi
         else:
             if item["revision"] != expected_revision:
                 raise ValueError("学习会话已更新，请重新读取revision后继续；未覆盖新进度")
+            if practice_id and item.get("practice_id") != practice_id:
+                raise ValueError("这道题已从当前会话换出，请刷新后继续")
             if item["status"] == "paused" and action == "checkpoint":
                 raise ValueError("会话已暂停；学生要求继续后先resume")
             for eid in payload["evidence_ids"]: _eligible(store, eid, item["course"])
@@ -273,12 +282,15 @@ def learning_gaps(store, now, course=""):
         if c not in catalogs:catalogs[c]=concept_catalog(store,c)[0]
         key=(c,topic_key(store,c,step['topic'],entries=catalogs[c]))
         if key not in latest or step['at']>latest[key]['at']:latest[key]=step
-    for step in latest.values():
+    paused = {session["id"] for session in store.list("learning_session") if session["status"] == "paused"}
+    for (_, key), step in latest.items():
         if step["self_rating"] > 2 or now-step["at"] > 30*86400 or not step["evidence_ids"]: continue
+        if step["session_id"] in paused:
+            continue
         try:
             for eid in step["evidence_ids"]: _eligible(store, eid, step["course"])
         except (KeyError, ValueError): continue
         gaps.append({"id": step["step_id"], "session_id": step["session_id"], "course": step["course"],
-                     "topic": step["topic"], "rating": step["self_rating"], "at": step["at"],
+                     "topic": step["topic"], "topic_key": key, "rating": step["self_rating"], "at": step["at"],
                      "citations": [{"evidence_id": eid} for eid in step["evidence_ids"]]})
     return sorted(gaps, key=lambda item: -item["at"])

@@ -1,0 +1,80 @@
+{
+  "courses": {"os": "演示课·并发控制", "dsd": "演示课·数字电路", "other": "演示课·会议管理"},
+  "sources": [
+    {
+      "key": "cv", "course": "os", "title": "并发控制演示讲义", "kind": "material",
+      "chunks": [
+        {"page": 3, "text": "条件变量（condition variable，CV）的唤醒只意味着线程可以再检查谓词。线程要在持有互斥锁的情况下检查共享队列是否为空。消费者甲从等待返回之前，消费者乙可能已经取走了最后一个元素。虚假唤醒也可能使等待提前返回。"},
+        {"page": 4, "text": "用 while 循环在唤醒后重新检查谓词。只用 if 检查一次时，消费者可能从空队列取元素。循环检查和互斥锁共同保护队列操作。"},
+        {"page": 4, "text": "信号量（semaphore）则维护许可数，释放操作可以留下供后来线程使用的许可。"}
+      ]
+    },
+    {
+      "key": "sync_video", "course": "os", "title": "演示课时一 · 回放字幕", "kind": "school_subtitle",
+      "meta": {"course_id": 9900991, "sub_id": 9900992, "page_url": "https://video.jw.scut.edu.cn/livingroom?course_id=9900991&sub_id=9900992"},
+      "chunks": [
+        {"basis": "video", "start": 92, "end": 99, "text": "回到条件变量。线程收到唤醒后，必须重新检查共享队列的谓词。"},
+        {"basis": "video", "start": 104, "end": 110, "text": "另一消费者可能先获得锁。不能因为通知到了就认为队列一定有元素。"}
+      ]
+    },
+    {
+      "key": "sync_asr", "course": "os", "title": "演示课时一 · 含误识别的转写", "kind": "asr",
+      "meta": {"course_id": 9900991, "sub_id": 9900992, "page_url": "https://video.jw.scut.edu.cn/livingroom?course_id=9900991&sub_id=9900992"},
+      "chunks": [
+        {"basis": "video", "start": 92, "end": 99, "text": "回到条件变量。线程收到唤醒后，不用重新检查共享队列的谓词。"}
+      ]
+    },
+    {
+      "key": "sync_capture", "course": "os", "title": "演示课时二 · 现场录音", "kind": "asr",
+      "meta": {"page_url": "https://video.jw.scut.edu.cn/livingroom?course_id=9900991&sub_id=9900993"},
+      "chunks": [
+        {"basis": "capture", "start": 17, "end": 24, "text": "虚假唤醒发生时，条件变量可能在没有通知的情况下返回。"}
+      ]
+    },
+    {
+      "key": "timing_old", "origin": "timing", "course": "dsd", "title": "数字电路演示讲义旧版", "kind": "material",
+      "chunks": [
+        {"page": 2, "text": "旧稿把建立时间写成时钟沿后，供失效版本检查。"}
+      ]
+    },
+    {
+      "key": "timing", "course": "dsd", "title": "数字电路演示讲义", "kind": "material",
+      "chunks": [
+        {"page": 7, "text": "建立时间（setup time）要求数据在有效时钟沿之前稳定。保持时间（hold time）要求数据在该时钟沿之后继续稳定。例题使用实验标签松针-27。若上升沿在 8 ns，建立时间为 2 ns，数据在 7 ns 才变为稳定，那么沿前仅稳定了 1 ns，建立时间少了 1 ns。"},
+        {"page": 8, "text": "同步复位（synchronous reset）在有效时钟沿采样。若复位在两个有效沿之间变化，寄存器在下一个有效沿才根据当时的复位值更新。异步复位的行为取决于元件对异步控制端的定义。"}
+      ]
+    },
+    {
+      "key": "timing_index", "course": "other", "title": "synchronous reset", "kind": "material",
+      "chunks": [{"page": 1, "text": "这个标题用于测试正文优先。内容介绍会议预约。"}]
+    },
+    {
+      "key": "wrong_course", "course": "other", "title": "会议预约讲义", "kind": "material",
+      "chunks": [{"page": 1, "text": "这里把条件变量（condition variable）作为会务表格字段名。它记录场地可用性。"}]
+    },
+    {
+      "key": "excluded", "course": "os", "title": "已停用的并发笔记", "kind": "material", "excluded": true,
+      "chunks": [{"page": 1, "text": "condition variable 每次唤醒都保证条件成立。"}]
+    }
+  ],
+  "aliases": [
+    {"course": "os", "canonical": "condition variable", "zh": "条件变量", "aliases": ["CV"], "refs": ["cv:0"]},
+    {"course": "dsd", "canonical": "setup time", "zh": "建立时间", "aliases": [], "refs": ["timing:0"]},
+    {"course": "dsd", "canonical": "hold time", "zh": "保持时间", "aliases": [], "refs": ["timing:0"]},
+    {"course": "dsd", "canonical": "synchronous reset", "zh": "同步复位", "aliases": [], "refs": ["timing:1"]}
+  ],
+  "queries": [
+    {"id": "cv_zh", "course": "os", "query": "条件变量", "expected": ["cv:0", "sync_video:0"]},
+    {"id": "cv_en", "course": "os", "query": "condition variable", "expected": ["cv:0"]},
+    {"id": "cv_alias", "course": "os", "query": "CV", "expected": ["cv:0", "sync_video:0"]},
+    {"id": "loop_condition", "course": "os", "query": "while 循环", "expected": ["cv:1"]},
+    {"id": "semaphore_contrast", "course": "os", "query": "semaphore", "expected": ["cv:2"]},
+    {"id": "setup_zh", "course": "dsd", "query": "建立时间", "expected": ["timing:0"]},
+    {"id": "hold_en", "course": "dsd", "query": "hold time", "expected": ["timing:0"]},
+    {"id": "cross_course_title", "course": "", "query": "synchronous reset", "expected": ["timing:1"], "first": "timing:1"},
+    {"id": "active_revision", "course": "dsd", "query": "时钟沿 建立时间", "expected": ["timing:0"]},
+    {"id": "capture_location", "course": "os", "query": "虚假唤醒", "expected": ["sync_capture:0", "cv:0"]},
+    {"id": "unknown_term", "course": "os", "query": "Frobenius eigenvalue", "expected": []},
+    {"id": "other_course", "course": "dsd", "query": "condition variable", "expected": []}
+  ]
+}

@@ -555,7 +555,8 @@ def create_app(settings=None, store=None, manager=None, *, run_workers=True, por
 
     @app.get("/{name}")
     def asset(name: str):
-        desktop_assets = {"desktop-entry.js", "desktop-entry.css", "start.html", "start.js", "study-workspace.css"}
+        desktop_assets = {"desktop-entry.js", "desktop-entry.css", "start.html", "start.js", "study-workspace.css",
+                          "workbuddy-entry.js"}
         mindmap_assets = {"mindmap.js", "mindmap.css", "markmap-vendor.min.js", "markmap-vendor.css"}
         if name not in desktop_assets | mindmap_assets | {"study.html", "study.js", "study.css", "study-tools.js", "study-actions.js", "study-specialized.js", "study-conversation.js", "study-conversation.css", "study-runtime.js", "study-runtime.css", "dashboard.html", "dashboard.js", "lecture-compare.js", "lecture-compare.css", "courseware.js", "courseware.css", "library.css", "library-core.js", "assistant.css", "client.js", "options.html", "options.js", "ui.js", "welcome.html", "welcome.js", "study-popup.html", "study-popup.js", "study-popup.css", "popup-state.js", "classroom.html", "classroom.js", "classroom.css", "session-view.js", "brand.png"}:
             raise HTTPException(404)

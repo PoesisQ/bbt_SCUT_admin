@@ -249,7 +249,15 @@ def check_citations(value, allowed):
 
 
 @traced("study")
-def run_agent(store, provider, *, course, question, purpose="ask", history=None, focus=None, max_steps=3):
+def run_agent(store, provider, *, course, question, purpose="ask", history=None, focus=None, max_steps=3,
+              practice_request_id="", practice_review_id="", practice_topic="", practice_session=None):
+    if purpose == "practice" and practice_request_id:
+        from .practice import practice_for_request
+
+        practice = practice_for_request(store, practice_request_id)
+        if practice and practice["course"] == course:
+            return {"status": "ready", "exercise": practice, "claims": [], "proposals": [],
+                    "uncertainties": [], "reply": "继续刚才这道题。", "trace": []}
     started = time.monotonic()
     from .knowledge import annotate_claims, relevant_memory
     allowed, sent = {}, set()
@@ -416,8 +424,12 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
                 saved.append(item)
             result["proposals"] = saved
             if result["exercise"]:
-                practice = store.save("practice", {**result["exercise"], "course": course, "attempts": [], "due_at": time.time()})
-                result["exercise"] = {k: v for k, v in practice.items() if k != "expected_answer"}
+                from .practice import start_practice
+                from uuid import uuid4
+
+                result["exercise"] = start_practice(store, course, practice_topic or question[:300],
+                    **result["exercise"], request_id=practice_request_id or uuid4().hex,
+                    review_id=practice_review_id, origin="web", **(practice_session or {}))
             attach_locations(result, allowed)
             if purpose == "classroom":
                 result["classroom_matches"] = classroom_cards()

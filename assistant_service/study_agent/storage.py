@@ -5,7 +5,7 @@ import json
 import re
 import sqlite3
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 
@@ -156,23 +156,23 @@ class StudyStore:
         return [decorate_evidence(self, {**item, "active": True}, source=sources[item["source_id"]], policies=policies)
                 for _, _, item in scored[:limit]]
 
-    def save(self, kind, value, eid=None):
+    def save(self, kind, value, eid=None, *, db=None):
         eid = eid or digest([kind, value, time.time_ns()])[:32]
         value = {**value, "id": eid, "kind": kind, "updated_at": time.time()}
-        with self.connect() as db:
-            db.execute("INSERT OR REPLACE INTO entities VALUES(?,?,?)", (eid, kind, json.dumps(value, ensure_ascii=False)))
+        with (nullcontext(db) if db is not None else self.connect()) as conn:
+            conn.execute("INSERT OR REPLACE INTO entities VALUES(?,?,?)", (eid, kind, json.dumps(value, ensure_ascii=False)))
         return value
 
-    def get(self, eid, kind=None):
-        with self.connect() as db:
-            row = db.execute("SELECT kind,data FROM entities WHERE id=?", (eid,)).fetchone()
+    def get(self, eid, kind=None, *, db=None):
+        with (nullcontext(db) if db is not None else self.connect()) as conn:
+            row = conn.execute("SELECT kind,data FROM entities WHERE id=?", (eid,)).fetchone()
         if not row or kind and row[0] != kind:
             raise KeyError("条目不存在")
         return json.loads(row[1])
 
-    def list(self, kind):
-        with self.connect() as db:
-            return [json.loads(row[0]) for row in db.execute("SELECT data FROM entities WHERE kind=? ORDER BY rowid DESC", (kind,))]
+    def list(self, kind, *, db=None):
+        with (nullcontext(db) if db is not None else self.connect()) as conn:
+            return [json.loads(row[0]) for row in conn.execute("SELECT data FROM entities WHERE kind=? ORDER BY rowid DESC", (kind,))]
 
     def save_run(self, value):
         value = {**value, "evidence_ids":[e["id"] for e in value.get("evidence",[])]}

@@ -13,7 +13,7 @@
 | 版本 | 适合谁 | 包含什么 |
 | --- | --- | --- |
 | [0.13.0 Windows 预览包][release] | 想先安装使用 | 桌面入口、实时字幕、回放整理、课程笔记、本地资料问答、复习与导出 |
-| [最新源码（main）][dev] | 想用刚完成的功能 | 上述功能，以及跨课时问答、今日复习清单、课件对照、离线思维导图、WorkBuddy 接入、公开资料核对 |
+| [开发源码][dev] | 想用新增功能 | 跨课时问答、今日复习清单、课件对照、离线思维导图、公开资料核对。WorkBuddy 接入进度见下方说明 |
 
 **0.13.0 安装包尚不包含源码中的新增功能。** 最新源码位于 GitHub 默认分支 `main`；使用新功能请按下方“从源码运行”安装。[合并记录见 PR #1][pr]。
 
@@ -112,15 +112,16 @@
 
 ## 在 WorkBuddy 里使用（开发版）
 
-WorkBuddy 与学习网页共用本机资料索引。**查已有资料时，直接打开 WorkBuddy 即可，不必先开学习网页或登录百步梯。** 回看学校视频时再去浏览器登录。
+WorkBuddy 是复习入口。首次从 SCUT 学习助手首页点 **准备连接器**，再点 **在 WorkBuddy 继续学习**。0.14.0 构建中的 Windows 安装器也可以在安装时准备连接器并做本机进程检查。
 
-先通过开发版学习助手导入课程或资料，然后在项目目录运行一次：
+在 **专家·技能·连接器 → 连接器 → 自定义连接器** 启用 `scut-study`，首次使用按客户端提示确认信任。新建任务，在输入框用 `/` 选择 SCUT 技能。当前连接器为 **0.6.0，25 个工具**。以后直接打开 WorkBuddy，学校登录留到导入课程或回看视频时处理。
 
-```powershell
-.\.venv\Scripts\python.exe scripts\prepare_workbuddy.py --install
-```
+<details>
+<summary>查看 WorkBuddy 接入界面</summary>
 
-在 WorkBuddy 的 **专家·技能·连接器 → 连接器 → 自定义连接器** 中检查 `scut-study`。本开发版为 **0.5.4，23 个工具**。如果换过电脑、移动过目录，或重连仍显示旧工具，打开“添加 MCP”的 JSON 编辑器，核对新的路径并保存，再按客户端提示确认信任。新对话输入 `/` 选择 `scut-study`。只想听讲时说“完整讲解，不用出题”，该方式会随学习会话续接。
+![0.14.0 开发版首页的 WorkBuddy 连接检查](manual/images/07-workbuddy-start.png)
+
+</details>
 
 可以直接开始一个学习目标：
 
@@ -130,11 +131,11 @@ WorkBuddy 与学习网页共用本机资料索引。**查已有资料时，直�
 
 > 用数字系统设计的课件出一套时序题，题目放前面，解析和出处放最后。
 
-学习会话记住实际讲到的主题、你的回答和下一步问题，换对话时可以接续；明确给出的自评会影响今日复习排序。课件、课堂原句和外部参考保留各自出处，来源更新后会提示重新核对。不会因为“读过了”就把一项记成已掌握，也不会把文字提到的板书当作已经看过的图。
+说“接着上次的题”可找回同一道练习，网页学习台也能打开它。作答后查看参考解法和原句。自评可留空，填了会用于今日清单和下次复习。原文更新后可以用新版本出题，旧作答仍可查阅。
 
-WorkBuddy 的模型组织讲解与题目。本地 MCP 取回相关原文、检查引文与位置、保存学习进度。接入时使用 WorkBuddy 账号和本地课程索引即可。数学与代码的排版另有格式规程。[格式规程](planning/DOCUMENT_FORMAT.md) · [本轮验证](workbuddy/VALIDATION.md)
+WorkBuddy 负责讲解与出题。本地 MCP 取回相关原文、检查引文与位置、保存学习进度。接入时使用 WorkBuddy 账号和本地课程索引即可。[完整接入说明][workbuddy] · [验证记录](workbuddy/VALIDATION.md)
 
-录音、课程批处理和资料导入从学习助手进入。开发者可构建 WorkBuddy 课程复习专家团配置，供题单制作与证据复核的客户端联调。[完整接入说明][workbuddy] · [专家团源码](workbuddy/expert-team/README.md) · [团队审查与优先级](planning/WORKBUDDY_REVIEW.md)
+录音、回放批处理和本地课件导入从 SCUT 学习助手进入。可用原创演示课复现检索测试，也可在 WorkBuddy 资料库里用这份讲义试出题和复核。[原创演示与评测](workbuddy/demo/README.md) · [专家团配置](workbuddy/expert-team/README.md)
 
 ## 模型和个人数据
 
@@ -230,8 +231,8 @@ uv run main.py get --all "课程链接"
 [issues]: https://github.com/PoesisQ/bbt_SCUT_admin/issues
 [dev]: https://github.com/PoesisQ/bbt_SCUT_admin/tree/main
 [pr]: https://github.com/PoesisQ/bbt_SCUT_admin/pull/1
-[start]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/main/manual/START.md
-[workbuddy]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/main/workbuddy/README.md
+[start]: manual/START.md
+[workbuddy]: workbuddy/README.md
 [mobile]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/main/mobile/README.md
 [changelog]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/main/CHANGELOG.md
 [design]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/main/planning/STUDY_TECHNICAL.md
