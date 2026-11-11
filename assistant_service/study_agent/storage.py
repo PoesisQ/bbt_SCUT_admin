@@ -124,20 +124,22 @@ class StudyStore:
             return []
         scored = []
         from .knowledge import decorate_evidence
-        policies = {(p["course"],p["origin"]):p for p in self.list("source_policy")}
-        sources = {s["id"]:s for s in self.sources(course)}
-        if source_id is not None:
-            sources = {sid:s for sid,s in sources.items() if sid == source_id}
-            if not sources:
-                return []
-        hidden = {s["id"] for s in sources.values() if policies.get((s["course"],s["origin"]),{}).get("excluded")}
         with self.connect() as db:
+            # Read the index, version metadata and exclusions from one SQLite snapshot.
+            db.execute("BEGIN")
+            sources = {row["id"]: json.loads(row["data"]) for row in db.execute(
+                "SELECT id,data FROM sources WHERE active=1 AND course=?", (course,))}
+            if source_id is not None and source_id not in sources:
+                return []
+            policies = {(p["course"], p["origin"]): p for row in db.execute(
+                "SELECT data FROM entities WHERE kind='source_policy'") if (p := json.loads(row[0]))["course"] == course}
+            hidden = {s["id"] for s in sources.values() if policies.get((course, s["origin"]), {}).get("excluded")}
             scope = " AND e.source_id=?" if source_id is not None else ""
             scope_args = (source_id,) if source_id is not None else ()
             if self.indexed:
                 match=" OR ".join('"'+word.replace('"','""')+'"' for word in sorted(wanted)[:160])
                 excluding=" AND e.source_id NOT IN ("+",".join("?" for _ in hidden)+")" if hidden else ""
-                rows=db.execute("SELECT e.data FROM evidence_search f JOIN evidence e ON e.rowid=f.rowid JOIN sources s ON s.id=e.source_id WHERE evidence_search MATCH ? AND s.active=1 AND e.course=?"+scope+excluding+" ORDER BY rank LIMIT ?",
+                rows=db.execute("SELECT e.data FROM evidence_search f JOIN evidence e ON e.rowid=f.rowid JOIN sources s ON s.id=e.source_id WHERE evidence_search MATCH ? AND s.active=1 AND e.course=?"+scope+excluding+" ORDER BY rank,e.id LIMIT ?",
                     (match, course, *scope_args, *sorted(hidden), max(96, limit*4))).fetchall()
             else:
                 rows=db.execute("SELECT e.data FROM evidence e JOIN sources s ON s.id=e.source_id WHERE s.active=1 AND e.course=?"+scope,(course,*scope_args)).fetchall()
@@ -145,12 +147,14 @@ class StudyStore:
             value = json.loads(row[0])
             if value["source_id"] in hidden:
                 continue
-            found = terms(value["text"] + " " + value["title"])
-            score = len(wanted & found) / max(1, len(wanted))
-            if score:
-                scored.append((score, value))
-        scored.sort(key=lambda item: (-item[0], item[1]["id"]))
-        return [decorate_evidence(self, item, source=sources[item["source_id"]], policies=policies) for _, item in scored[:limit]]
+            body_terms = terms(value["text"])
+            body_score = len(wanted & body_terms)
+            total_score = len(wanted & (body_terms | terms(value["title"])))
+            if total_score:
+                scored.append((body_score, total_score, value))
+        scored.sort(key=lambda hit: (-hit[0], -hit[1], hit[2]["id"]))
+        return [decorate_evidence(self, {**item, "active": True}, source=sources[item["source_id"]], policies=policies)
+                for _, _, item in scored[:limit]]
 
     def save(self, kind, value, eid=None):
         eid = eid or digest([kind, value, time.time_ns()])[:32]

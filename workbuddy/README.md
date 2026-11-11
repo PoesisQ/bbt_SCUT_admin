@@ -2,7 +2,7 @@
 
 用一句话查课堂出处、接着上次学，或拿课件和论文对照课堂说法。学习目标、实际作答和自评保存在本机；WorkBuddy 按需读取相关片段，用自己的模型讲解和提问，不再套一遍 DeepSeek。
 
-当前版本 **0.5.3 / 22个工具**。流程与记忆设计见 [WorkBuddy Agent 设计](../planning/WORKBUDDY_AGENT.md)，技能入口是 [SKILL.md](skills/scut-study/SKILL.md)。
+当前版本 **0.5.4 / 23 个工具**。流程与记忆设计见[WorkBuddy Agent 设计](../planning/WORKBUDDY_AGENT.md)，技能入口是[SKILL.md](skills/scut-study/SKILL.md)。
 
 ## 本机接入
 
@@ -16,7 +16,7 @@
 
 脚本把 `scut-study` 合并到 `%USERPROFILE%\.workbuddy\mcp.json`，把技能及 `references/` 规程一起安装到 `skills/scut-study/`。已有连接器保留，变更文件先备份；遇到同名的其他程序会停下，不覆盖。生成文件含本机路径，保存在数据目录的 `workbuddy/`，不要提交 GitHub。
 
-在 WorkBuddy 的“专家·技能·连接器 → 连接器 → 自定义”检查 `scut-study`。客户端尚未加载时，用“添加 MCP”的 JSON 编辑器检查并保存生成的配置。如果出现信任或权限提示，请自己核对后操作。文件已写入不代表客户端已连接，最终应看到 **22 个工具**，且连接检查返回 **0.5.3**。旧会话仍显示10个工具时，重新连接该连接器，再新开对话加载技能，不用重启正在录音的扩展或课堂服务。
+在 WorkBuddy 的“专家·技能·连接器 → 连接器 → 自定义连接器”检查 `scut-study`。显示旧数量时先重连。迁移过目录或重连仍报 `Connection closed` 时，打开“添加 MCP”的 JSON 编辑器，确认解释器、脚本和资料路径均指向当前电脑，保存使客户端刷新注册。如果路径已正确但保存按钮灰色，可在 JSON 末尾加一个空行再保存。首次信任由使用者在客户端核对后确认。连接成功后应看到 **23 个工具**，新对话调用连接检查应返回 **0.5.4**。
 
 新建对话后可以这样说：
 
@@ -29,6 +29,8 @@
 > 操作系统老师在哪讲过条件变量？给我原句和回看位置。
 
 > 今晚只有30分钟，先学什么？
+
+> 用数字系统设计的课件出三道时序题，把解析和出处放在最后。
 
 > 查公开教材，核对条件变量为什么需要在 while 循环里等待；把课堂说法和教材的适用条件讲清楚。
 
@@ -52,11 +54,12 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 | `prepare_learning_context` | 一次取同课多来源原文、相关确认要求、任务和续接进度 |
 | `read_study_evidence_context` | 读取同一版本的前后片段，核对条件与发言转场 |
 | `open_learning_session` | 为明确学习目标建立本机会话；重试不重复创建 |
-| `get_learning_session` | 恢复目标、最近问题、实际作答及来源失效提示 |
+| `get_learning_session` | 省略课程也能找最近目标，选中后恢复问题、作答及来源失效提示 |
 | `list_course_concepts` | 分页查同课、有当前原文支持的术语名称与易混项 |
 | `prepare_term_practice` | 打包别名辨认、定义及应用的提问依据 |
-| `search_knowledge_base` | 按关键词检索本地知识库原文，可跨课程，返回带出处的片段 |
-| `prepare_quiz` | 按知识库证据打包组卷素材、出题角度与规程，由模型逐题出题 |
+| `search_knowledge_base` | FTS5 检索带出处的完整片段，正文优先，可按课程或跨课程 |
+| `prepare_quiz` | 一次取材，按实际题位逐题练习或交付整套题单 |
+| `verify_study_quotes` | 批量验证引文和可用版本，从原文计算页码或字幕时间 |
 | `refresh_course_index` | 同步本课已保存文字，补齐漏索引的课时，不录音 |
 | `verify_boolean_design` | 安全解析1–6变量布尔式，穷举逻辑等价并返回反例 |
 | `record_learning_progress` | 保存实际作答、可选自评和下一步；版本冲突不覆盖 |
@@ -100,6 +103,10 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 输出 Markdown、`evidence.jsonl` 和 `manifest.json`，保留来源 ID、版本、页码或时间。不会自动上传；已有快照不会无提示覆盖。静态材料更新后，回答前仍需通过 MCP 检查当前版本。周期复习继续用学习助手的调度器，避免两边重复通知。
 
 ## 实际联调
+
+### 0.5.4 · 2026-11-11
+
+检索与组卷的审查、修复和下一轮优先级见[WorkBuddy 审查](../planning/WORKBUDDY_REVIEW.md)。专家团配置按平台包规范提供课程导师、出题员和证据复核员，可本地构建 ZIP。当前客户端与协议验证分别记录在[验证记录](VALIDATION.md)。[专家团配置](expert-team/README.md)
 
 ### 0.5.0 · 2026-11-04
 

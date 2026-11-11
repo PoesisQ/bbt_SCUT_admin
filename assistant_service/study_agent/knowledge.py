@@ -18,12 +18,16 @@ def policy_id(source):
     return "policy-" + digest([source["course"], source["origin"]])[:32]
 
 
+def default_policy(source):
+    return {"role": "transcript" if source["kind"] in NOISY else "external" if source["kind"] == "external" else "other",
+            "excluded": False, "trusted": False}
+
+
 def source_policy(store, source):
     try:
         return store.get(policy_id(source), "source_policy")
     except KeyError:
-        return {"role": "transcript" if source["kind"] in NOISY else "external" if source["kind"] == "external" else "other",
-                "excluded": False, "trusted": False}
+        return default_policy(source)
 
 
 def catalog(store, course=""):
@@ -49,8 +53,9 @@ def decorate_evidence(store, item, *, source=None, policies=None):
         if not row:return item
         import json
         source = json.loads(row[0])
-    policy = source_policy(store, source) if policies is None else policies.get((source["course"],source["origin"]), {"excluded":False,"trusted":False})
+    policy = source_policy(store, source) if policies is None else policies.get((source["course"], source["origin"]), default_policy(source))
     return {**item, "policy": policy, "origin": source["origin"], "source_meta": source.get("meta", {}),
+            "source_version": source["fingerprint"],
             "reliability": "transcription_unchecked" if item["kind"] in NOISY else
                            "selected_reference" if policy["trusted"] else "original_unchecked"}
 

@@ -6,7 +6,7 @@
 
 交付多章稿时，将这条主题顺序写给读者。用一个贯穿问题讲清各章为什么排在这里，在章首先说本章如何从已有结果走到新结论。课堂记录里有展开的推导或逐行例题时，将具体片段定位到正文。若课件原图能交代接线或时序，核对图后紧跟相关段落嵌入，并写读图时应先找哪里。详见 `teaching-evidence.md` 与 `document-format.md`。
 
-1. `get_learning_session(course)` 找最近目标；指定会话只取该项。按当前问题选择，不能默认第一项必然正确。
+1. `get_learning_session(course)` 找最近目标；指定会话只取该项。“接着上次”且课程未知时直接用 `get_learning_session()`。多项目标都可能时先显示名称与最近进度供学生选。
 2. 有匹配会话则继续；没有才 `open_learning_session(course, goal, request_id, language)`。request_id 为本次动作唯一的短ID，同一调用失败重试保留原ID，新的动作使用新ID。不要在不同对话重复用 `start-1` 之类常量。语言默认 bilingual；学生明确要中文/英文时用 zh/en。学生说不用做题/只听讲时，teaching_mode传explain；主动练习才使用interactive。已有会话可在记录当前明确偏好时更新teaching_mode，不填学生未提供的答案或自评。
 3. 状态 paused 时，学生本次明确要继续才写 resume。来源 `needs_source_refresh` 时先重检，旧证据不充当当前事实。
 4. 调 `prepare_learning_context(course, topic, session_id)`。一轮最多八段完整片段、原文载荷16000字符；资料目录与会话另有精简上限，不等于模型token计费上限。

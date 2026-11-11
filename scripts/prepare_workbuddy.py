@@ -77,7 +77,7 @@ def install_local(config, output, target, *, skill_root=None):
         os.replace(temp, destination)
         copied.append(relative.as_posix())
     return {"config": str(path), "skill": str(skill), "changed": changed, "skill_files_changed": copied,
-        "notice": "仅安装本地工具配置，保留其他连接器；如客户端要求信任，请由本人确认。"}
+        "notice": "在 WorkBuddy 自定义连接器检查 scut-study。重连仍失败时，在客户端的 MCP JSON 编辑器核对路径并保存。"}
 
 
 def configuration(data_dir, python=None, root=ROOT):
@@ -139,7 +139,7 @@ def main():
         shutil.copytree(ROOT / "workbuddy/skills", output / "skills", dirs_exist_ok=True)
         if args.install:
             installed = install_local(config, output, args.workbuddy_home)
-            print("已接入本机 WorkBuddy：" + installed["config"])
+            print("已写入 WorkBuddy 本机配置：" + installed["config"])
             print(installed["notice"])
         if args.export_course:
             count = export_course(args.data_dir, output, args.export_course)
