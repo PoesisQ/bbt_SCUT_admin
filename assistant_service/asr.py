@@ -73,20 +73,28 @@ class Transcriber:
         self.worker_process = None
         self.worker_signature = None
         if process is not None:
+            if process.stdin:
+                try:
+                    process.stdin.close()
+                except OSError:
+                    pass
             try:
-                if process.poll() is None:
+                # Let an idle recognizer exit through EOF. On Windows the venv
+                # launcher may exit before the recognizer releases its log.
+                process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
                     process.terminate()
                     process.wait(timeout=3)
-            except (OSError, subprocess.TimeoutExpired):
-                if process.poll() is None:
-                    process.kill()
-                    process.wait()
-            for stream in (process.stdin, process.stdout):
-                if stream:
-                    try:
-                        stream.close()
-                    except OSError:
-                        pass
+                except (OSError, subprocess.TimeoutExpired):
+                    if process.poll() is None:
+                        process.kill()
+                        process.wait()
+            if process.stdout:
+                try:
+                    process.stdout.close()
+                except OSError:
+                    pass
         if self.worker_log:
             self.worker_log.close()
             self.worker_log = None
