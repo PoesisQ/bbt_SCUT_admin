@@ -8,24 +8,26 @@ from __future__ import annotations
 import json
 import time
 
-from .classroom_search import location
+from .classroom_search import location, quote_range
 from .context import evidence_payload, pack_evidence, select_memory
 from .knowledge import catalog
 from .storage import digest
-from .concepts import expand_query, topic_key, catalog as concept_catalog
+from .concepts import topic_key, catalog as concept_catalog
 from .index_state import index_status
+from .knowledge_base import retrieve_evidence
 
-VERSION = "0.5.3"
+VERSION = "0.6.0"
 MAX_CONTEXT = 16000
 
 
-def public_evidence(e):
-    clean = {k: e[k] for k in ("id", "source_id", "course", "title", "kind", "text", "active", "reliability") if k in e}
+def public_evidence(e, *, quote=""):
+    clean = {k: e[k] for k in ("id", "source_id", "source_version", "course", "title", "kind", "text",
+                              "active", "reliability", "query_match") if k in e}
     clean["locator"] = {k: v for k, v in e.get("locator", {}).items()
                         if k in {"page", "slide", "section", "start", "end", "time_basis"}}
     clean["policy"] = {k: e.get("policy", {}).get(k) for k in ("role", "excluded", "trusted")}
     clean["external_provenance"] = evidence_payload(e)["external_provenance"]
-    return {**clean, "location": location(e)}
+    return {**clean, "location": location(e, quote)}
 
 
 def _eligible(store, eid, course=None):
@@ -35,6 +37,29 @@ def _eligible(store, eid, course=None):
     if not e["active"] or e.get("policy", {}).get("excluded"):
         raise ValueError("来源已更新或停用，请重新检索后继续")
     return e
+
+
+def verify_study_quotes(store, course, citations):
+    """Resolve active, literal quotations and compute their locations server-side."""
+    results = []
+    for citation in citations:
+        eid, quote = citation["evidence_id"], citation["quote"].strip()
+        item = {"evidence_id": eid}
+        try:
+            evidence = _eligible(store, eid, course)
+        except (KeyError, ValueError):
+            results.append({**item, "status": "unavailable"})
+            continue
+        match = quote_range(evidence["text"], quote)
+        if not match:
+            results.append({**item, "status": "quote_not_found"})
+            continue
+        original = match.group(0)
+        source = public_evidence(evidence, quote=original)
+        results.append({**item, "status": "matched", "quote": original,
+                        **{key: source[key] for key in ("location", "locator", "source_version", "reliability")}})
+    return {"course": course, "all_matched": all(item["status"] == "matched" for item in results),
+            "items": results, "scope": "核对原句、来源版本与位置。知识主张是否成立还需比较前提与上下文。"}
 
 
 def evidence_context(store, evidence_id, radius=1):
@@ -49,10 +74,9 @@ def evidence_context(store, evidence_id, radius=1):
     ids = [x[0] for x in reversed(before)] + [evidence_id] + [x[0] for x in after]
     # Prioritise the requested chunk, keeping complete chunks rather than slicing quotes.
     items = [focus] + [_eligible(store, eid, focus["course"]) for eid in ids if eid != evidence_id]
-    selected, budget = pack_evidence(items, 12000)
-    wanted = {e["id"] for e in selected}
+    selected, budget = pack_evidence(items, 12000, project=public_evidence)
     return {"focus_id": evidence_id, "course": focus["course"], "budget": budget,
-            "items": [public_evidence(e) for e in sorted(items, key=lambda e: ids.index(e["id"])) if e["id"] in wanted],
+            "items": sorted(selected, key=lambda e: ids.index(e["id"])),
             "notice": "邻近文本不等于看过画面；发言者、板书与考试要求需分别核对。超预算片段可按ID单独读取。"}
 
 
@@ -81,31 +105,25 @@ def list_materials(store, course, offset=0):
 
 
 def prepare_context(store, course, topic, session_id=""):
+    if not course.strip():
+        raise ValueError("请指定本课名称")
     session = session_view(store, session_id) if session_id else None
     if session and session["course"] != course:
         raise ValueError("不能把另一门课的学习会话混入当前上下文")
     explain_only = bool(session and session["teaching_mode"] == "explain")
     sources, coverage = _source_summary(store, course)
     coverage['classroom_index']=index_status(store,course)
-    # Diversify before taking additional hits, so a transcript cannot crowd out slides.
-    terminology = expand_query(store, course, topic)
-    hits = store.search(terminology['expanded_query'], course, 24)
-    first, extra, seen = [], [], set()
-    for e in hits:
-        (extra if e["source_id"] in seen else first).append(e)
-        seen.add(e["source_id"])
-    candidates = (first + extra)[:8]
-    packed, budget = pack_evidence(candidates, MAX_CONTEXT)
-    ids = {e["id"] for e in packed}
+    candidates, terminology, _ = retrieve_evidence(store, topic, course, 8)
+    packed, budget = pack_evidence(candidates, MAX_CONTEXT, project=public_evidence)
     tasks = [t for t in store.list("task") if t.get("course") == course
              and t.get("status") == "accepted" and not t.get("completed")]
     requirements = [r for r in store.list("proposal") if r.get("course") == course
                     and r.get("proposal_kind") == "requirement" and r.get("status") == "accepted"]
     return {"course": course, "topic": topic, "session": session,
-            "coverage": coverage, "budget": budget, "terminology": terminology,
+            "coverage": coverage, "budget": budget, "terminology": terminology[course],
             "sources": [{k: s[k] for k in ("id", "title", "kind", "fingerprint")} for s in sources[:24]],
             "sources_omitted": max(0, len(sources)-24),
-            "evidence": [public_evidence(e) for e in candidates if e["id"] in ids],
+            "evidence": packed,
             "confirmed_tasks": [{k: t.get(k) for k in ("id", "title", "deadline", "estimate_min", "estimate_max")}
                                 for t in select_memory(tasks, topic, 4, fallback=True)],
             "confirmed_requirements": [{k: r.get(k) for k in ("id", "detail", "title", "source")}
@@ -175,29 +193,51 @@ def session_view(store, session_id):
                          "answer_origin": "student_report" if step.get("student_answer") else "not_provided",
                          "rating_origin": "student_self_report" if step.get("self_rating") else "not_provided",
                          "next_question_origin": "assistant_suggestion"})
-    return {k: item[k] for k in ("id", "course", "goal", "language", "revision", "status", "updated_at")} | {
+    value = {k: item[k] for k in ("id", "course", "goal", "language", "revision", "status", "updated_at")} | {
         "teaching_mode": item.get("teaching_mode", "interactive"),
         "recent_steps": recent, "stale_evidence_ids": sorted(stale),
         "needs_source_refresh": bool(stale), "knowledge_confirmed": False}
+    if item.get("practice_id"):
+        from .practice import practice_view
+        value["practice"] = practice_view(store, store.get(item["practice_id"], "practice"))
+        value["needs_source_refresh"] |= value["practice"]["source_stale"]
+    return value
 
 
-def get_session(store, course, session_id=""):
+def get_session(store, course="", session_id=""):
     if session_id:
         result = session_view(store, session_id)
-        if result["course"] != course: raise ValueError("会话不属于当前课程")
+        if course and result["course"] != course:
+            raise ValueError("会话不属于当前课程")
         return result
-    items = sorted((s for s in store.list("learning_session") if s["course"] == course), key=lambda s: -s["updated_at"])
-    return {"course": course, "sessions": [session_view(store, s["id"]) for s in items[:3]],
-            "more_sessions": max(0, len(items)-3), "notice": "按目标选择已有会话，不能把未作答当已掌握。"}
+    with store.connect() as db:
+        scope = " AND json_extract(data,'$.course')=?" if course else ""
+        rows = db.execute("SELECT id, data, count(*) OVER() AS total FROM entities WHERE kind='learning_session'"
+                          + scope + " ORDER BY json_extract(data,'$.updated_at') DESC, id LIMIT 3",
+                          (course,) if course else ()).fetchall()
+    total = rows[0]["total"] if rows else 0
+    choices_only = not course and total > 1
+    if choices_only:
+        sessions = []
+        for row in rows:
+            item = json.loads(row["data"])
+            sessions.append({key: item[key] for key in ("id", "course", "goal", "status", "updated_at")})
+    else:
+        sessions = [session_view(store, row["id"]) for row in rows]
+    return {"course": course, "sessions": sessions, "choices_only": choices_only,
+            "more_sessions": total - len(rows),
+            "notice": "选择目标后按会话ID读取上次题目和学生原答。" if choices_only else "已保存的学习记录可用于接续。"}
 
 
 def record_progress(store, session_id, request_id, expected_revision, topic, evidence_ids,
-                    question="", student_answer="", self_rating=None, next_question="", action="checkpoint", teaching_mode=""):
+                    question="", student_answer="", self_rating=None, next_question="", action="checkpoint", teaching_mode="",
+                    *, practice_id=""):
     if teaching_mode not in {"", "interactive", "explain"}:raise ValueError("教学方式须为interactive或explain")
     event_id = "step-" + digest([session_id, request_id])[:32]
     payload = {"topic": topic, "evidence_ids": list(dict.fromkeys(evidence_ids)), "question": question,
                "student_answer": student_answer, "self_rating": self_rating, "next_question": next_question, "action": action}
     if teaching_mode:payload["teaching_mode"]=teaching_mode
+    if practice_id:payload["practice_id"]=practice_id
     signature = digest(payload)
     with store.connect() as db:
         db.execute("BEGIN IMMEDIATE")
@@ -209,6 +249,8 @@ def record_progress(store, session_id, request_id, expected_revision, topic, evi
         else:
             if item["revision"] != expected_revision:
                 raise ValueError("学习会话已更新，请重新读取revision后继续；未覆盖新进度")
+            if practice_id and item.get("practice_id") != practice_id:
+                raise ValueError("这道题已从当前会话换出，请刷新后继续")
             if item["status"] == "paused" and action == "checkpoint":
                 raise ValueError("会话已暂停；学生要求继续后先resume")
             for eid in payload["evidence_ids"]: _eligible(store, eid, item["course"])
@@ -240,12 +282,15 @@ def learning_gaps(store, now, course=""):
         if c not in catalogs:catalogs[c]=concept_catalog(store,c)[0]
         key=(c,topic_key(store,c,step['topic'],entries=catalogs[c]))
         if key not in latest or step['at']>latest[key]['at']:latest[key]=step
-    for step in latest.values():
+    paused = {session["id"] for session in store.list("learning_session") if session["status"] == "paused"}
+    for (_, key), step in latest.items():
         if step["self_rating"] > 2 or now-step["at"] > 30*86400 or not step["evidence_ids"]: continue
+        if step["session_id"] in paused:
+            continue
         try:
             for eid in step["evidence_ids"]: _eligible(store, eid, step["course"])
         except (KeyError, ValueError): continue
         gaps.append({"id": step["step_id"], "session_id": step["session_id"], "course": step["course"],
-                     "topic": step["topic"], "rating": step["self_rating"], "at": step["at"],
+                     "topic": step["topic"], "topic_key": key, "rating": step["self_rating"], "at": step["at"],
                      "citations": [{"evidence_id": eid} for eid in step["evidence_ids"]]})
     return sorted(gaps, key=lambda item: -item["at"])

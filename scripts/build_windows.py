@@ -25,7 +25,7 @@ def public_files(root=ROOT):
     for folder in ('assistant_service', 'extension', 'manual', 'workbuddy'):
         for p in (root/folder).rglob('*'):
             rel=p.relative_to(root)
-            if p.is_file() and not any(part.startswith('.') or part=='__pycache__' for part in rel.parts) and not p.name.endswith('.test.js') and p.name!='local-connection.js':
+            if p.is_file() and rel.parts[:2] != ('workbuddy', 'expert-team') and not any(part.startswith('.') or part=='__pycache__' for part in rel.parts) and not p.name.endswith('.test.js') and p.name!='local-connection.js':
                 yield rel
     for name in ('config.py','subtitle.py','LICENSE','README.md','start-assistant.ps1','stop-assistant.ps1','停止课堂助手.cmd',
                  'register-launcher.ps1','register-native-launcher.ps1','install-desktop.ps1',
@@ -70,8 +70,11 @@ def main():
                 if any(part in {'.local','.git','data','output'} for part in rel.parts[:1]) or p.name in {'credentials.json','settings.json','local-connection.js'}:raise ValueError('Private file in payload: '+str(rel))
                 z.write(p,rel.as_posix())
     installer=dist/f'SCUT-Study-Setup-{VERSION}.exe'
+    version_resource=build/'version.txt'
+    version_resource.write_text(VERSION, 'utf-8')
     subprocess.run(common+['/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll',
-        '/resource:'+str(portable)+',payload.zip','/out:'+str(installer),str(ROOT/'scripts/Installer.cs')],check=True)
+        '/resource:'+str(portable)+',payload.zip','/resource:'+str(version_resource)+',version.txt',
+        '/out:'+str(installer),str(ROOT/'scripts/Installer.cs')],check=True)
     print(json.dumps({'installer':str(installer),'bytes':installer.stat().st_size,'portable':str(portable)},ensure_ascii=False))
 
 

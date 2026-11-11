@@ -11,10 +11,11 @@ from .storage import StudyStore
 from .classroom_search import find_classroom_mentions, location
 from .daily import daily_plan
 from .research import search_public_references, read_public_reference, prepare_evidence_comparison
-from .tutoring import (VERSION, public_evidence, evidence_context, prepare_context,
+from .tutoring import (VERSION, public_evidence, evidence_context, prepare_context, verify_study_quotes,
                        list_materials, open_session, get_session, record_progress)
-from .concepts import list_concepts, prepare_term_practice, expand_query
+from .concepts import list_concepts, prepare_term_practice
 from .knowledge_base import search_knowledge_base, prepare_quiz
+from .practice import start_practice, submit_attempt
 from .index_state import refresh_index
 from .boolean_check import verify_boolean_design
 from ..telemetry import execution, emit
@@ -24,6 +25,12 @@ def tool(name, description, properties=None, required=None, *, readonly=True, ex
     return {"name": name, "description": description, "inputSchema": {"type": "object", "properties": properties or {},
             "required": list(properties or {}) if required is None else required, "additionalProperties": False},
             "annotations": {"readOnlyHint": readonly, "destructiveHint": False, "openWorldHint": external}}
+
+
+QUOTE_SCHEMA = {"type": "array", "minItems": 1, "maxItems": 6, "items": {
+    "type": "object", "properties": {"evidence_id": {"type": "string", "minLength": 1, "maxLength": 80},
+                                   "quote": {"type": "string", "minLength": 1, "maxLength": 1500}},
+    "required": ["evidence_id", "quote"], "additionalProperties": False}}
 
 
 TOOLS = [
@@ -66,10 +73,32 @@ TOOLS = [
         "query": {"type": "string", "minLength": 1, "maxLength": 500},
         "course": {"type": "string", "maxLength": 160},
         "limit": {"type": "integer", "minimum": 1, "maximum": 24}}, required=["query"]),
-    tool("prepare_quiz", "按知识库检索结果打包组卷证据、出题角度和规程，交给当前模型逐题出题。不调用模型、不自动判分、不写入已确认知识；无原文时明确返回缺口，不凭常识编题。", {
+    tool("prepare_quiz", "学生明确要练习或组卷时调用一次，自带检索。返回实际有原文的题位，可能少于请求数量。interactive逐题等待作答，worksheet一次交付题单与末尾解析。", {
         "course": {"type": "string", "minLength": 1, "maxLength": 160},
         "topic": {"type": "string", "minLength": 1, "maxLength": 500},
-        "count": {"type": "integer", "minimum": 1, "maximum": 6}}, required=["course", "topic"]),
+        "count": {"type": "integer", "minimum": 1, "maximum": 6},
+        "delivery": {"type": "string", "enum": ["interactive", "worksheet"], "maxLength": 11}}, required=["course", "topic"]),
+    tool("verify_study_quotes", "核对同一门课的1–6条引文。只接受有效来源中的原句，按原始跨度返回页码或时间。matched只证明引文存在与来源可用，不能证明引文支持结论。", {
+        "course": {"type": "string", "minLength": 1, "maxLength": 160},
+        "citations": QUOTE_SCHEMA}),
+    tool("start_practice", "保存学生主动请求的一道题，校验引文后建立可续接练习。已有会话可传 session_id 和该会话的 expected_revision。只把题干给学生，等待真实作答。", {
+        "course": {"type": "string", "minLength": 1, "maxLength": 160},
+        "topic": {"type": "string", "minLength": 1, "maxLength": 300},
+        "question": {"type": "string", "minLength": 1, "maxLength": 1200},
+        "expected_answer": {"type": "string", "minLength": 1, "maxLength": 1800},
+        "citations": QUOTE_SCHEMA,
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80},
+        "session_id": {"type": "string", "maxLength": 80},
+        "expected_revision": {"type": "integer", "minimum": 0, "maximum": 1000000000},
+        "review_id": {"type": "string", "maxLength": 80}},
+        required=["course", "topic", "question", "expected_answer", "citations", "request_id"], readonly=False),
+    tool("submit_practice_answer", "把学生本人这次给出的原始作答写到当前练习，并返回参考答案。expected_revision 使用题目自身的 revision。rating 只在学生明确自评时传入。同一次重试保留 request_id。", {
+        "practice_id": {"type": "string", "minLength": 1, "maxLength": 80},
+        "answer": {"type": "string", "minLength": 1, "maxLength": 3000},
+        "rating": {"type": "integer", "minimum": 1, "maximum": 4},
+        "request_id": {"type": "string", "minLength": 1, "maxLength": 80},
+        "expected_revision": {"type": "integer", "minimum": 0, "maximum": 1000000000}},
+        required=["practice_id", "answer", "request_id", "expected_revision"], readonly=False),
     tool("prepare_learning_context", "为一个学习问题打包同课多来源原文、覆盖缺口、已确认要求和任务，可带session_id续接进度。无二次模型调用，不声称读完整课或看过板书。", {
         "course": {"type": "string", "minLength": 1, "maxLength": 160},
         "topic": {"type": "string", "minLength": 1, "maxLength": 500},
@@ -87,9 +116,9 @@ TOOLS = [
         "language": {"type": "string", "enum": ["bilingual", "zh", "en"], "maxLength": 10},
         "teaching_mode": {"type": "string", "enum": ["interactive", "explain"], "maxLength": 11}},
         required=["course", "goal", "request_id"], readonly=False),
-    tool("get_learning_session", "恢复同课学习进度。传session_id读取一项；不传返回最近3项供按目标选择。标出来源失效与自报性质，不自动认定掌握。", {
-        "course": {"type": "string", "minLength": 1, "maxLength": 160},
-        "session_id": {"type": "string", "maxLength": 80}}, required=["course"]),
+    tool("get_learning_session", "恢复学习进度。已知course或session_id就传；只说接着上次时可省略课程，一次返回最近3项目标。多门课都有进度时用目标名请学生选。", {
+        "course": {"type": "string", "maxLength": 160},
+        "session_id": {"type": "string", "maxLength": 80}}, required=[]),
     tool("record_learning_progress", "记录实际讲到的主题、学生原始作答/明确自评和下一题。expected_revision防并发覆盖；request_id防重试重复。不能替学生捏造作答、自评或掌握，可按学生要求pause/resume。", {
         "session_id": {"type": "string", "minLength": 1, "maxLength": 80},
         "request_id": {"type": "string", "minLength": 1, "maxLength": 80},
@@ -105,7 +134,8 @@ TOOLS = [
         required=["session_id", "request_id", "expected_revision", "topic", "evidence_ids"], readonly=False),
 ]
 for definition in TOOLS:
-    if definition["name"] in {"open_learning_session", "record_learning_progress", "refresh_course_index"}:
+    if definition["name"] in {"open_learning_session", "record_learning_progress", "refresh_course_index",
+                               "start_practice", "submit_practice_answer"}:
         definition["annotations"]["idempotentHint"] = True
 
 
@@ -150,6 +180,10 @@ class Server:
         args, fields = params.get("arguments", {}), definition["inputSchema"]["properties"]
         def valid(value, schema):
             if "enum" in schema and value not in schema["enum"]: return False
+            if schema["type"] == "object":
+                properties = schema["properties"]
+                return (isinstance(value, dict) and set(schema["required"]) <= value.keys() <= properties.keys()
+                        and all(valid(v, properties[k]) for k, v in value.items()))
             if schema["type"] == "array":
                 return isinstance(value, list) and schema["minItems"] <= len(value) <= schema["maxItems"] and all(valid(v, schema["items"]) for v in value)
             if schema["type"] == "integer":
@@ -163,7 +197,7 @@ class Server:
                 emit("tool.start", name, {"tool": name, "arguments": args, "client": "MCP"})
                 value = self.call_tool(name, args)
                 emit("tool.finish", name, {"tool": name, "status": "completed"})
-            return reply({"content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False)}], "isError": False})
+            return reply({"content": [{"type": "text", "text": json.dumps(value, ensure_ascii=False, separators=(",", ":"))}], "isError": False})
         except (ValueError, KeyError, sqlite3.Error, OSError) as exc:
             message = str(exc) if isinstance(exc, ValueError) else "来源不存在或读取失败，请重新检索。"
             return reply({"content": [{"type": "text", "text": message}], "isError": True})
@@ -174,7 +208,8 @@ class Server:
                 "capabilities": {"learning_sessions": True, "context_neighbors": True, "local_progress": True,
                                  "automatic_grading": False, "raw_file_access": False, "notification_send": False,
                                  "course_terminology": True, "term_wording_practice": True,
-                                 "knowledge_base": True, "quiz_preparation": True},
+                                 "knowledge_base": True, "quiz_preparation": True, "quote_verification": True,
+                                 "shared_practice": True},
                 "web_service_required": False, "scope": "本地已索引课程；新录音由课堂助手同步。公开检索独立检查网络。"}
         handlers = {"search_public_references": search_public_references, "read_public_reference": read_public_reference,
             "prepare_evidence_comparison": prepare_evidence_comparison, "find_classroom_mentions": find_classroom_mentions,
@@ -183,13 +218,16 @@ class Server:
             "get_learning_session": get_session, "record_learning_progress": record_progress,
             "list_course_concepts": list_concepts, "prepare_term_practice": prepare_term_practice,
             "search_knowledge_base": search_knowledge_base, "prepare_quiz": prepare_quiz,
+            "verify_study_quotes": verify_study_quotes, "start_practice": start_practice,
+            "submit_practice_answer": submit_attempt,
             "refresh_course_index": refresh_index}
         if name == 'verify_boolean_design':return verify_boolean_design(**args)
         if name in handlers: return handlers[name](self.store, **args)
         if name == "list_study_courses": return sorted({s["course"] for s in self.store.sources()})
         if name == "search_course_sources":
-            query=expand_query(self.store,args['course'],args['query'])['expanded_query']
-            return [public_evidence(e) for e in self.store.search(query, args["course"], limit=6)]
+            if not args["course"].strip():
+                raise ValueError("请指定本课名称")
+            return search_knowledge_base(self.store, args["query"], args["course"], limit=6)["items"]
         if name == "read_study_evidence": return public_evidence(self.store.evidence(args["evidence_id"]))
         return [{k: t.get(k) for k in ("id", "course", "title", "deadline", "estimate_min", "estimate_max", "spent_minutes")}
                 for t in self.store.list("task") if t.get("status") == "accepted" and not t.get("completed")][:100]

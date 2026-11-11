@@ -11,6 +11,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from config import parse_course_url
 from .settings import ROOT, atomic_json
+from .workbuddy_setup import launch_workbuddy, prepare_desktop, probe_connector, workbuddy_status
 
 SCHOOL = "https://video.jw.scut.edu.cn/"
 VPN = "https://video-jw-443.webvpn.scut.edu.cn/"
@@ -64,6 +65,34 @@ def router(settings, classroom):
     def welcomed():
         (settings.root / "desktop-welcomed").touch()
         return {"ok": True}
+
+    @api.get("/workbuddy")
+    def workbuddy():
+        return workbuddy_status(settings.root)
+
+    @api.post("/workbuddy/setup")
+    def setup_workbuddy():
+        try:
+            return prepare_desktop(settings.root, repair=True)
+        except (ValueError, OSError) as exc:
+            raise HTTPException(409, "无法更新 WorkBuddy 配置。请关闭配置编辑器，再检查本机权限并重试。") from exc
+
+    @api.post("/workbuddy/check")
+    def check_workbuddy():
+        state = workbuddy_status(settings.root)
+        if state["state"] == "configured":
+            state["probe"] = probe_connector(settings.root)
+        return state
+
+    @api.post("/workbuddy/open")
+    def open_workbuddy():
+        try:
+            launch_workbuddy()
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(409, "WorkBuddy 启动失败，请尝试从开始菜单打开。") from exc
+        return {"opened": True}
 
     @api.get("/status")
     def status():

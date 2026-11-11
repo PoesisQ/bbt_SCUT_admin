@@ -49,7 +49,7 @@ globalThis.LectureMindmap=(()=>{
     const version=++s.renderVersion;
     s.renderQueue=s.renderQueue.catch(()=>{}).then(async()=>{
       if(!active(s)||version!==s.renderVersion||!s.meta)return;
-      if(!s.meta.available&&!s.meta.custom){s.empty.hidden=false;s.empty.textContent="本课还没有知识点笔记。先在“知识点笔记”中生成笔记，再查看导图。";s.svg.hidden=true;update(s);return;}
+      if(!s.meta.available&&!s.meta.custom){s.empty.hidden=false;s.empty.textContent="本课还没有知识点笔记。先在“主题笔记”中生成笔记，再查看导图。";s.svg.hidden=true;update(s);return;}
       s.rendering=true;update(s);
       try{
         const tree=prepare(s.editor.value);

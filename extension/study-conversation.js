@@ -26,12 +26,26 @@
     b.addEventListener("click", async () => { b.disabled = true; try { await handler(); } catch (e) { notice(e.message); } finally { b.disabled = false; } }); return b;
   }
   function scrollLatest() { $("composer-anchor").scrollIntoView({behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "end"}); }
-  function cite(parent, citations) { for (const [i, c] of (citations || []).entries()) { const b = button(c.location ? `${c.location.lesson} · ${c.location.time_label}` : "依据 " + (i + 1) + " ↗", () => T.showEvidence(c.evidence_id), "cite"); b.title = c.quote; parent.append(b); const replay = StudySpecialized.replayLink(c.location); if (replay) parent.append(replay); } }
+  function cite(parent, citations) {
+    for (const [i, c] of (citations || []).entries()) {
+      const label = c.locator?.page ? "第 " + c.locator.page + " 页" :
+        c.locator?.slide ? "幻灯片 " + c.locator.slide : c.location?.time_label;
+      const b = button(c.location ? c.location.lesson + " · " + label : "依据 " + (i + 1) + " ↗",
+        () => T.showEvidence(c.evidence_id), "cite");
+      b.title = c.quote; parent.append(b);
+      const replay = StudySpecialized.replayLink(c.location); if (replay) parent.append(replay);
+    }
+  }
   function menuClose() { $("tools-menu").close(); }
   $("open-tools").addEventListener("click", () => $("tools-menu").showModal());
   $("close-tools").addEventListener("click", menuClose);
+  $("tools-menu").addEventListener("click", e => {
+    if (e.target.closest("#open-library, #open-runtime, #school-entry, #sync")) menuClose();
+  }, true);
   document.querySelectorAll("[data-open]").forEach(b => b.addEventListener("click", () => { menuClose(); T.switchView(b.dataset.open); }));
   $("close-review").addEventListener("click", () => $("review-dialog").close());
+  $("close-shared-practice").addEventListener("click", () => $("shared-practice-dialog").close());
+  document.addEventListener("study-open-practice", e => { showPractice(e.detail).catch(error => notice(error.message)); });
   document.addEventListener("study-open-image", e => { $("evidence-dialog").close(); openImage(e.detail).catch(error => notice(error.message)); });
   $("manage-reviews").addEventListener("click", () => { menuClose(); renderReviews(); $("review-dialog").showModal(); });
   document.addEventListener("study-state", e => {
@@ -40,7 +54,7 @@
     if (hasDraft() && remembered !== null && [...$("course").options].some(option => option.value === remembered)) $("course").value = remembered;
     if (!hasDraft() && !$("course").value && home.course) $("course").value = home.course;
     $("model-note").textContent = s.provider.configured
-      ? `${s.provider.model}${s.provider.vision ? " · 支持图片" : " · 当前仅文字"} · 发送时使用相关摘录与所选图片，记录保存在本机`
+      ? `${s.provider.model}${s.provider.vision ? " · 支持图片" : " · 当前仅文字"} · 发送时使用相关摘录与所选图片`
       : "模型尚未连接。可以先发送资料，或到设置中保存 Key。";
     $("onboarding").textContent = s.sources.length ? `已索引 ${s.sources.length} 份资料与课堂记录。` : "添加资料或同步课堂记录后，可以按课程提问。";
   });
@@ -98,7 +112,11 @@
     $("pending-badge").textContent = home.pending_count || "";
   }
   function renderDialogue() {
-    const root = $("conversation"); root.replaceChildren(); $("welcome").hidden = home.turns.length > 0;
+    const root = $("conversation"); root.replaceChildren();
+    const hasConversation = home.turns.length > 0;
+    $("welcome").hidden = hasConversation;
+    $("starters").hidden = hasConversation;
+    shell.classList.toggle("has-conversation", hasConversation);
     for (const turn of home.turns) {
       const pair = el("article", undefined, "exchange"), user = el("div", undefined, "user-message");
       if (turn.course) user.append(el("span", turn.course, "course-label")); user.append(el("p", turn.question));
@@ -106,7 +124,8 @@
       pair.append(user); const reply = el("div", undefined, "assistant-message"); reply.append(el("span", "SCUT", "speaker"));
       if (turn.status === "failed") reply.append(el("p", turn.error, "uncertainty"), button("接着试一次", () => send(turn.question, {request: turn.request_input || {
         conversation: turn.conversation || conversation, client_id: "retry-" + turn.id, question: turn.question,
-        course: turn.course, attachments: (turn.attachments || []).map(a => a.id), purpose: turn.purpose, review_id: turn.review_id || null
+        course: turn.course, attachments: (turn.attachments || []).map(a => a.id), purpose: turn.purpose, review_id: turn.review_id || null,
+        practice_id: turn.request_input?.practice_id || null
       }})));
       else if (turn.status === "running") reply.append(el("p", "这条消息正在处理。页面关掉再回来，对话仍会留在这里。", "fine"));
       else renderAnswer(reply, turn);
@@ -118,6 +137,7 @@
   function renderAnswer(root, turn) {
     const r = turn.result || {}; if (r.reply && !r.operation_id) root.append(el("p", r.reply));
     StudySpecialized.renderDaily(root, r.daily_plan, button, step => {
+      if (step.practice_id) return showPractice(step.practice_id);
       if (step.kind === "replan") return send(`今天${step.course ? "只安排" + step.course + "，" : ""}还有 ${step.minutes} 分钟，按当前进度重新安排复习清单。`, {course:step.course, purpose:"today"});
       if (step.kind === "review") return startReview({...step, topic:step.title});
       return send(step.kind === "task" ? `我现在留出 ${step.minutes} 分钟做“${step.title}”。结合已确认的要求，帮我拆出可以动手的下一步。不要直接给作业答案。` : `请围绕“${step.title}”给一道题，检验上次没弄清的地方。`, {course:step.course, purpose:step.kind === "task" ? "ask" : "practice"});
@@ -167,25 +187,96 @@
     stage.append(el("p", proposal.due_text ? "老师提到的时间是“" + proposal.due_text + "”。你能确认对应哪一天吗？" : "先补最有用的一项：截止时间清楚吗？"), input,
       button("就是这一天", () => { if (!input.value) throw new Error("先选一个已确认的日期，或选暂不确定"); deadline = input.value; effort(); }), button("暂不确定，先留空", async () => effort()));
   }
-  function renderExercise(root, exercise, turn) {
-    const box = el("div", undefined, "exercise"), form = el("form"), answer = el("textarea"), rating = el("select"), result = el("div");
-    box.append(el("span", "练习", "fine"), el("h3", exercise.question));
-    if (exercise.last_attempt) { box.append(el("p", "你当时的回答：" + exercise.last_attempt.answer), el("p", exercise.expected_answer)); cite(box, exercise.citations); root.append(box); return; }
+  async function showPractice(id) {
+    const item = await A.api("/api/study/practice/" + encodeURIComponent(id));
+    const dialog = $("shared-practice-dialog"), content = $("shared-practice-content");
+    content.replaceChildren();
+    renderExercise(content, item, {}, true);
+    if (!dialog.open) dialog.showModal();
+  }
+  function renderExercise(root, exercise, turn, inDialog = false) {
+    const box = el("div", undefined, "exercise"), form = el("form"), answer = el("textarea"), rating = el("select");
+    box.append(el("span", exercise.course || "练习", "fine"), el("h3", exercise.question));
+    const changeState = action => button(action === "pause" ? "暂停这道题" : "恢复这道题", async () => {
+      await post("/practice/" + encodeURIComponent(exercise.id) + "/state",
+        {action, expected_revision: exercise.session_revision, request_id: crypto.randomUUID()});
+      if (inDialog) await showPractice(exercise.id);
+      await refresh();
+    }, "quiet");
+    if (exercise.source_stale) {
+      box.append(el("p", "这道题的原文已更新，请按当前资料重新出题。", "uncertainty"));
+    }
+    const nextPractice = () => {
+      if (inDialog) $("shared-practice-dialog").close();
+      return send(`围绕“${exercise.topic}”用当前资料出一道新题，先别给答案。`,
+        {course: exercise.course, purpose: "practice", practice_id: exercise.id});
+    };
+    if (exercise.is_current === false && exercise.current_practice_id)
+      box.append(button("打开本主题的最新练习", () => showPractice(exercise.current_practice_id)));
+    if (exercise.last_attempt) {
+      box.append(el("p", "你的作答 " + exercise.last_attempt.answer), el("p", exercise.expected_answer));
+      if (exercise.last_attempt.rating && !exercise.source_stale && exercise.status !== "paused" && !exercise.review_id)
+        box.append(el("p", "下次复习 " + niceTime(exercise.due_at), "fine"));
+      const feedback = exercise.last_attempt.feedback;
+      if (feedback?.summary) box.append(el("p", feedback.summary, "fine"));
+      for (const point of feedback?.missing || []) box.append(el("p", point, "fine"));
+      cite(box, exercise.citations);
+      if (exercise.status !== "paused" && exercise.is_current !== false)
+        box.append(button(exercise.source_stale ? "按新资料出题" : "再做一道变式题", nextPractice));
+      if (exercise.session_id && exercise.is_current !== false)
+        box.append(changeState(exercise.status === "paused" ? "resume" : "pause"));
+      root.append(box); return;
+    }
+    if (exercise.source_stale || exercise.status === "paused" || exercise.is_current === false) {
+      if (exercise.status === "paused" && exercise.is_current !== false) box.append(changeState("resume"));
+      else if (exercise.is_current !== false) box.append(button("按新资料出题", nextPractice));
+      root.append(box); return;
+    }
     answer.required = true; answer.maxLength = 3000; answer.rows = 3; answer.placeholder = "写下你的思路，卡在哪里也可以…"; answer.setAttribute("aria-label", "这道题的回答");
-    for (const [i, text] of ["完全卡住", "需要一点提示", "能大致解释", "能独立推导"].entries()) { const option = el("option", text); option.value = i + 1; rating.append(option); }
+    const placeholder = el("option", "自评（可选）"); placeholder.value = ""; rating.append(placeholder);
+    for (const [i, text] of ["完全卡住", "需要一点提示", "能独立解释", "能应用到新情境"].entries()) { const option = el("option", text); option.value = i + 1; rating.append(option); }
+    const key = "scut-practice-draft-" + exercise.id;
+    let draft = {};
+    try { draft = JSON.parse(sessionStorage.getItem(key) || "{}"); } catch { /* Ignore invalid local drafts. */ }
+    answer.value = draft.answer || ""; rating.value = draft.rating || "";
+    const saveDraft = () => {
+      if (draft.answer !== answer.value || draft.rating !== rating.value) {
+        draft = {answer: answer.value, rating: rating.value, request_id: crypto.randomUUID()};
+        sessionStorage.setItem(key, JSON.stringify(draft));
+      }
+    };
+    answer.addEventListener("input", saveDraft); rating.addEventListener("change", saveDraft);
     rating.setAttribute("aria-label", "这次回忆的感受"); const submit = el("button", "看看参考答案"); submit.type = "submit";
     form.append(answer, rating, submit); form.addEventListener("submit", async e => { e.preventDefault(); submit.disabled = true; try {
-      const reply = await post(`/practice/${exercise.id}/attempt`, {answer: answer.value, rating: Number(rating.value), review_id: turn.review_id || null});
-      result.replaceChildren(el("p", reply.expected_answer)); cite(result, reply.citations); const feedback=reply.attempts?.at(-1)?.feedback;if(feedback){result.append(el("h4","作答反馈"),el("p",feedback.summary));for(const point of feedback.missing||[])result.append(el("p",point));result.append(el("small",feedback.label||"暂按自评安排"));}
-      if (turn.review_id) { const review = reply.review || await post(`/reviews/${turn.review_id}`, {action: "complete", rating: Number(rating.value)}); result.append(el("p", "下次复习：" + niceTime(review.due_at), "fine")); await refresh(); }
-      else result.append(el("p", "用下方“加入复习”安排这段内容的复习。", "fine"));
-    } catch (error) { notice(error.message); submit.disabled = false; } }); box.append(form, result); root.append(box);
+      saveDraft();
+      const reply = await post("/practice/" + encodeURIComponent(exercise.id) + "/attempt", {
+        answer: answer.value, rating: rating.value ? Number(rating.value) : null, review_id: turn.review_id || exercise.review_id || null,
+        request_id: draft.request_id, expected_revision: exercise.revision ?? null
+      });
+      sessionStorage.removeItem(key);
+      if (inDialog) await showPractice(exercise.id);
+      else { box.remove(); renderExercise(root, reply, turn); }
+      await refresh();
+    } catch (error) { notice(error.message); submit.disabled = false; } }); box.append(form); root.append(box);
+    if (exercise.session_id) box.append(changeState("pause"));
   }
   function renderNudge() {
     const root = $("gentle-next"); root.replaceChildren();
-    if (home.due.length) { const review = home.due[0]; root.append(el("span", "今日复习", "eyebrow"), el("strong", review.course + " · " + review.topic), button("花几分钟回忆", () => startReview(review)), button("明天再来", async () => { await post(`/reviews/${review.id}`, {action: "snooze"}); await refresh(); }, "quiet")); root.hidden = false; }
+    const practice = (home.recent_practices || []).find(item => item.status === "pending" && !item.source_stale);
+    if (practice) {
+      root.append(el("span", "上次的练习", "eyebrow"),
+        el("strong", practice.course + " · " + practice.topic), button("继续这道题", () => showPractice(practice.id)),
+        button("换个主题", () => $("question").focus(), "quiet"));
+      root.hidden = false;
+    }
+    else if (home.due.length) { const review = home.due[0]; root.append(el("span", "今日复习", "eyebrow"), el("strong", review.course + " · " + review.topic), button("花几分钟回忆", () => startReview(review)), button("明天再来", async () => { await post(`/reviews/${review.id}`, {action: "snooze"}); await refresh(); }, "quiet")); root.hidden = false; }
     else if (home.task_count) { root.append(el("span", "待办", "eyebrow"), el("p", `还有 ${home.task_count} 件已确认的任务，尚未完成。`), button("帮我安排今天", today)); root.hidden = false; }
     else if (home.reviews.length) { root.append(el("span", "下次复习", "eyebrow"), el("p", `下次复习 ${niceTime(home.reviews[0].due_at)} · ${home.reviews[0].course}`), button("调整节奏", () => { renderReviews(); $("review-dialog").showModal(); }, "quiet")); root.hidden = false; }
+    else if (home.recent_practices?.length) {
+      const last = home.recent_practices[0];
+      root.append(el("strong", last.course + " · " + last.topic), button("查看上次练习", () => showPractice(last.id)));
+      root.hidden = false;
+    }
     else root.hidden = true;
   }
   function startReview(review) { $("review-dialog").close(); const mode={prerequisite:"先找出前置理解缺口，给一道基础辨析题",application:"换一个情境，给一道应用题",connection:"给一道串联前后概念的题",recall:"给一道回忆关键条件的题"}[review.mode]||"给一道题"; return send(mode+"。"+"请围绕“" + review.topic + "”出一道检验理解的题，接着串联它的前置知识。先不要给答案。", {course: review.course, purpose: "practice", review_id: review.id}); }
@@ -207,17 +298,48 @@
     }
   }
   async function today() {
-    return send("今晚只有30分钟，先学什么？", {course:"", purpose:"today"});
+    const stored = Number(sessionStorage.getItem("study-today-minutes"));
+    const minutes = Number.isInteger(stored) && stored >= 1 && stored <= 240 ? stored : 30;
+    const preset = [15, 30, 60].includes(minutes) ? String(minutes) : "custom";
+    for (const radio of document.querySelectorAll('input[name="today-budget"]')) radio.checked = radio.value === preset;
+    $("today-minutes").value = String(minutes);
+    $("custom-minutes-field").hidden = preset !== "custom";
+    $("today-minutes").required = preset === "custom";
+    $("today-minutes").disabled = preset !== "custom";
+    $("today-error").hidden = true;
+    $("today-dialog").showModal();
   }
+  $("close-today").addEventListener("click", () => $("today-dialog").close());
+  $("today-form").addEventListener("change", () => {
+    const custom = document.querySelector('input[name="today-budget"]:checked')?.value === "custom";
+    $("custom-minutes-field").hidden = !custom;
+    $("today-minutes").required = custom;
+    $("today-minutes").disabled = !custom;
+    $("today-error").hidden = true;
+  });
+  $("today-form").addEventListener("submit", async e => {
+    e.preventDefault();
+    const selected = document.querySelector('input[name="today-budget"]:checked')?.value;
+    const minutes = Number(selected === "custom" ? $("today-minutes").value : selected);
+    if (sending || !Number.isInteger(minutes) || minutes < 1 || minutes > 240) {
+      $("today-error").textContent = sending ? "上一条消息正在处理，稍后再安排今天的清单。" : "请填写 1–240 之间的整数分钟。";
+      $("today-error").hidden = false;
+      return;
+    }
+    sessionStorage.setItem("study-today-minutes", String(minutes));
+    $("today-dialog").close();
+    await send(`今天有 ${minutes} 分钟，结合已确认的任务和复习记录，帮我安排今日清单。`, {course: "", purpose: "today"});
+  });
   $("open-today").addEventListener("click", () => today().catch(e => notice(e.message)));
   document.querySelectorAll("[data-starter]").forEach(b => b.addEventListener("click", () => { if (b.dataset.intent === "today") today().catch(e => notice(e.message)); else if (hasDraft()) { notice("输入框中还有草稿，请先发送或整理好当前内容。"); $("question").focus(); } else { $("question").value = b.dataset.starter; sessionStorage.setItem("study-draft-text", $("question").value); $("question").focus(); } }));
   async function send(text, options = {}) {
     if (sending || (options.draft && uploading)) return;
     const question = text.trim(); if (!question) return;
     const payload = options.request || {conversation, question, course: options.course ?? $("course").value,
-      attachments: options.attachments || [], purpose: options.purpose || "auto", review_id: options.review_id || null};
+      attachments: options.attachments || [], purpose: options.purpose || "auto", review_id: options.review_id || null,
+      ...(options.practice_id ? {practice_id: options.practice_id} : {})};
     const kind = options.draft ? "draft" : "action";
-    const signature = value => JSON.stringify([value.conversation, value.question, value.course, value.attachments, value.purpose, value.review_id]);
+    const signature = value => JSON.stringify([value.conversation, value.question, value.course, value.attachments, value.purpose, value.review_id, value.practice_id || null]);
     let entry = outbox.find(item => payload.client_id ? item.payload.client_id === payload.client_id : item.kind === kind && signature(item.payload) === signature(payload));
     if (!entry) {
       entry = {kind, payload: {...payload, client_id: payload.client_id || crypto.randomUUID()}, draft: options.draft || null};

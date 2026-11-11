@@ -10,14 +10,13 @@
   const post=(path,body={})=>A.api("/api/study"+path,{method:"POST",body,timeout:115000});
   function timecode(value){return new Date((value||0)*1000).toISOString().slice(11,19);}
   function locationText(e){const l=e.locator||{};return l.page?`第 ${l.page} 页`:l.slide?`第 ${l.slide} 张`:l.session_id?`${timecode(l.start)}–${timecode(l.end)}${l.time_basis==="capture"?" · 录音计时":""}`:`第 ${l.section||1} 段`;}
-  function dateText(value){return new Date(value).toLocaleString("zh-CN",{month:"numeric",day:"numeric",hour:"2-digit",minute:"2-digit",hour12:false});}
   function empty(node,text){node.append(el("p",text,"empty"));}
   async function showEvidence(id){const e=await A.api("/api/study/evidence/"+encodeURIComponent(id));$("evidence-title").textContent=e.title;$("evidence-location").textContent=`${e.course} · ${locationText(e)}${e.active?"":" · 历史版本"}`;const replay=globalThis.StudySpecialized?.replayLink(e.location);if(replay)$("evidence-location").append(document.createTextNode(" "),replay);$("evidence-text").textContent=e.text;if(e.locator?.image){$("evidence-text").prepend(button("查看对应原图 ↗",async()=>document.dispatchEvent(new CustomEvent("study-open-image",{detail:e.locator.image}))));}$("evidence-dialog").showModal();}
   function citations(parent,items){for(const c of items||[]){const b=button("查看原文 ↗",()=>showEvidence(c.evidence_id),"cite");b.title=c.quote;parent.append(b);}}
   function switchView(name){$("workspace-dialog").showModal();document.querySelectorAll(".view").forEach(n=>n.hidden=n.id!=="view-"+name);document.querySelectorAll("[data-view]").forEach(n=>n.setAttribute("aria-pressed",String(n.dataset.view===name)));}
   document.querySelectorAll("[data-view]").forEach(n=>n.addEventListener("click",()=>switchView(n.dataset.view)));
   async function load(){
-    const old=course();state=await A.api("/api/study/overview");$("connection").textContent="本地已连接";$("onboarding").textContent=state.onboarding;
+    const old=course();state=await A.api("/api/study/overview");$("connection").textContent="本地已连接";$("connection").dataset.state="connected";$("onboarding").textContent=state.onboarding;
     $("course").replaceChildren();const automatic=el("option","由对话识别课程");automatic.value="";$("course").append(automatic);$("course-names").replaceChildren();
     for(const name of state.courses){const option=el("option",name);option.value=name;$("course").append(option);const hint=el("option");hint.value=name;$("course-names").append(hint);}
     if(state.courses.includes(old))$("course").value=old;
@@ -44,8 +43,19 @@
       const actions=el("div",undefined,"review-actions");actions.append(button("确认",async()=>{if(p.proposal_kind==="task"&&(!min.value||!max.value))throw new Error("请先估计这项任务的用时；大项目可以先拆成一个具体步骤。");await post(`/proposals/${p.id}`,{status:"accepted",deadline:deadline?.value||null,estimate_min:min?Number(min.value):null,estimate_max:max?Number(max.value):null});await load();notify(p.proposal_kind==="correction"?"已保存核对意见，原字幕保持原样。":"已保存，可在任务或后续问答中使用。");}),button("暂不采用",async()=>{await post(`/proposals/${p.id}`,{status:"rejected"});await load();}));item.append(actions);root.append(item);
     }
   }
-  function renderPractices(){const root=$("practices");root.replaceChildren();const items=state.practice.filter(p=>p.course===course()).slice(0,5);if(!items.length)empty(root,"先选一个主题，再用“给我一道练习”检验理解。");
-    for(const p of items){const item=el("div",undefined,"practice-row");item.append(el("p",p.question),el("p",`复习时间：${dateText(p.due_at*1000)}`,"fine"));const form=el("form"),answer=el("textarea"),rating=el("select");answer.required=true;answer.maxLength=3000;answer.rows=3;answer.placeholder="先写下自己的思路";answer.setAttribute("aria-label","你的答案");for(const [i,text] of ["完全卡住","需要提示","大致能解释","能独立推导"].entries()){const o=el("option",text);o.value=String(i+1);rating.append(o);}rating.setAttribute("aria-label","理解程度自评");const submit=el("button","保存自评，查看参考答案");submit.type="submit";form.append(answer,rating,submit);const result=el("div");form.addEventListener("submit",e=>{e.preventDefault();act(submit,async()=>{const r=await post(`/practice/${p.id}/attempt`,{answer:answer.value,rating:Number(rating.value)});result.replaceChildren(el("p",r.expected_answer),el("p",`下次复习：${dateText(r.due_at*1000)} · 根据自评安排，不等同于客观掌握度`,"fine"));citations(result,r.citations);});});item.append(form,result);root.append(item);}
+  function renderPractices() {
+    const root = $("practices");
+    root.replaceChildren();
+    const items = state.practice.filter(p => !course() || p.course === course()).slice(0, 5);
+    if (!items.length) empty(root, "说“给我一道练习”，保存过的题会出现在这里。");
+    for (const practice of items) {
+      const item = el("div", undefined, "practice-row");
+      item.append(el("p", practice.question), button("打开练习", () => {
+        $("workspace-dialog").close();
+        document.dispatchEvent(new CustomEvent("study-open-practice", {detail: practice.id}));
+      }));
+      root.append(item);
+    }
   }
   $("task-form").addEventListener("submit",e=>{e.preventDefault();act(e.submitter,async()=>{await post("/tasks",{course:$("task-course").value,title:$("task-title").value,deadline:$("task-deadline").value||null,estimate_min:Number($("task-min").value),estimate_max:Number($("task-max").value),difficulty:Number($("task-difficulty").value)});$("task-title").value="";await load();notify("任务已保存。生成计划时会按可用时间拆分。");});});
   function renderTasks(){const root=$("tasks");root.replaceChildren();const tasks=state.tasks.filter(t=>t.status==="accepted"&&!t.completed).sort((a,b)=>(a.deadline||"9999").localeCompare(b.deadline||"9999"));$("task-count").textContent=tasks.length||"";if(!tasks.length)empty(root,"先写下一件具体的事，不用一次规划整个学期。");
@@ -84,5 +94,5 @@
   $("collect-visuals").addEventListener("click",()=>act($("collect-visuals"),async()=>{if(!course())throw new Error("先选择要关联的课程");const result=await A.send("COLLECT_VISUAL_EVIDENCE",{tabId:Number($("visual-tab").value)});const saved=await post("/visuals",{...result,course:course()});$("visual-list").replaceChildren(el("p",`${saved.title} · 已保存 ${saved.items.length} 张带时间的截图索引`));for(const item of saved.items.slice(0,8)){const a=el("a",timecode(item.seconds)+" 查看原图 ↗","cite");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";$("visual-list").append(a);}}));
   globalThis.StudyTools={load,switchView,showEvidence,state:()=>state};
   $("close-workspace").addEventListener("click",()=>$("workspace-dialog").close());
-  load().catch(e=>{$("connection").textContent="本地未连接";notify(e.message);});tabs().catch(()=>{});
+  load().catch(e=>{$("connection").textContent="本地未连接";$("connection").dataset.state="offline";notify(e.message);});tabs().catch(()=>{});
 })();

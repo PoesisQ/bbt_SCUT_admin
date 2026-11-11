@@ -81,7 +81,8 @@ class APITests(unittest.TestCase):
         # FileResponse normally guesses MIME types from Windows registry entries.
         assets = {"/": "text/html", "/study.html": "text/html", "/client.js": "text/javascript",
                   "/study-tools.js": "text/javascript", "/study-conversation.js": "text/javascript",
-                  "/options.js": "text/javascript", "/study.css": "text/css", "/brand.png": "image/png"}
+                  "/options.js": "text/javascript", "/study.css": "text/css",
+                  "/study-workspace.css": "text/css", "/brand.png": "image/png"}
         with patch("starlette.responses.guess_type", return_value=("text/plain", None)):
             for path, expected in assets.items():
                 with self.subTest(path=path):

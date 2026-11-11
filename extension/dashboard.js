@@ -166,19 +166,12 @@ function renderDetail(){
     for(const e of highlights){const line=node("div",undefined,"lesson-alert-line");line.append(node("span",categoryLabel(e.category),"event-badge"),node("span",e.message),seek(e.start));strip.append(line);}
     if(assignments.length>highlights.length)strip.append(node("small","还有作业要求，点击“查看全部事项”阅读完整列表。"));summary.append(strip);}
   if(detail.summary){
-    const topics=detail.summary.topics||[];
     if(detail.summary.abstract)summary.append(node("p",detail.summary.abstract,"lesson-abstract"));
-    summary.append(node("p",topics.length+" 条分段笔记"+(partial?" · 后续内容仍在整理":"")+" · 点击时间定位回放","overview-intro"));
-    const list=node("div",undefined,"topic-notes");
-    for(const [index,t] of topics.entries()){const card=node("details",undefined,"topic-note"),top=node("header");card.id="topic-"+index;
-      const compare=node("button","课件 · 原话 · 笔记 ↗");compare.onclick=()=>{showView("compare");globalThis.LectureCompare?.select(index);};
-      top.append(seek(t.start),compare);if(t.chapter)top.append(node("span",t.chapter,"chapter-tag"));
-      card.append(node("summary",t.title),top,LectureCompare.markdown(t.detail));list.append(card);
-    }
-    if(!topics.length)list.append(node("p",detail.summary.overview||"本段未提取到独立知识点。","overview-intro"));
-    const all=node("details",undefined,"all-notes");all.open=!detail.summary.groups?.length;all.append(node("summary","全部分段笔记 · "+topics.length),list);
-    if(detail.summary.groups?.length){const groups=node("div",undefined,"theme-grid");for(const g of detail.summary.groups){const card=node("article",undefined,"theme-card");card.append(node("h3",g.title),LectureCompare.markdown(g.detail));const refs=node("div",undefined,"theme-refs");for(const index of g.topic_indices||[]){if(!topics[index])continue;const link=node("button",topics[index].title);link.onclick=()=>{all.open=true;const target=list.children[index];target.open=true;target.scrollIntoView({block:"center",behavior:matchMedia("(prefers-reduced-motion: reduce)").matches?"instant":"smooth"});};refs.append(link);}card.append(refs);groups.append(card);}summary.append(groups);}
-    summary.append(all);
+    LectureNotes.mount(summary,detail,{
+      seek,
+      compare:index=>{showView("compare");globalThis.LectureCompare?.select(index);},
+      markdown:LectureCompare.markdown
+    });
   }else{
     const empty=node("div",undefined,"library-empty"),action=L.action({...detail,segment_count:detail.segments.length},configured);
     empty.append(node("h3",busy?"正在阅读本课字幕":detail.analysis_status==="failed"?"笔记生成中断":"本课笔记尚未生成"),

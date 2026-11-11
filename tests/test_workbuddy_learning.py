@@ -98,6 +98,17 @@ class WorkBuddyLearningTests(unittest.TestCase):
         with self.assertRaises(ValueError): prepare_context(self.store, "Other", "LIF", s["id"])
         self.assertEqual(get_session(self.store, "Neuroscience")["sessions"][0]["id"], s["id"])
 
+    def test_resume_without_course_only_shares_answers_after_selecting_a_target(self):
+        session = self.step(self.session(), student_answer="My previous answer")
+        self.assertEqual(get_session(self.store)["sessions"][0]["id"], session["id"])
+        second = open_session(self.store, "Other", "Another goal", "start-2")
+        choices = get_session(self.store)
+        self.assertTrue(choices["choices_only"])
+        self.assertEqual([row["id"] for row in choices["sessions"]], [second["id"], session["id"]])
+        self.assertNotIn("My previous answer", json.dumps(choices))
+        resumed = get_session(self.store, session_id=session["id"])
+        self.assertEqual(resumed["recent_steps"][0]["student_answer"], "My previous answer")
+
     def test_retry_does_not_duplicate_or_overwrite_student_input(self):
         s = self.session()
         value = self.step(s, student_answer="HH retains channel state", self_rating=2)
@@ -170,13 +181,13 @@ class WorkBuddyLearningTests(unittest.TestCase):
         server.handle({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}})
         server.handle({"jsonrpc":"2.0","method":"notifications/initialized"})
         def call(name,args):return server.handle({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":name,"arguments":args}})
-        self.assertEqual(len(TOOLS),22)
+        self.assertEqual(len(TOOLS),25)
         self.assertEqual(call("read_study_evidence_context",{"evidence_id":self.eid,"radius":3})["error"]["code"],-32602)
         s=self.session()
         args={"session_id":s["id"],"request_id":"bad","expected_revision":True,"topic":"x","evidence_ids":[]}
         self.assertEqual(call("record_learning_progress",args)["error"]["code"],-32602)
         status=json.loads(call("study_connection_status",{})["result"]["content"][0]["text"])
-        self.assertEqual(status["server_version"],"0.5.3")
+        self.assertEqual(status["server_version"],"0.6.0")
         self.assertFalse(status["capabilities"]["automatic_grading"])
 
     def test_mcp_learning_flow_can_resume_and_plan_without_a_second_model(self):

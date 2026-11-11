@@ -30,8 +30,14 @@ def create_review(store, *, course, topic, citations, days=1, now=None, source="
 
 
 def update_review(store, rid, *, action, rating=None, now=None, feedback=None):
+    with store.connect() as db:
+        db.execute("BEGIN IMMEDIATE")
+        return update_review_in_transaction(store, db, rid, action=action, rating=rating, now=now, feedback=feedback)
+
+
+def update_review_in_transaction(store, db, rid, *, action, rating=None, now=None, feedback=None):
     now = time.time() if now is None else now
-    item = store.get(rid, "review")
+    item = store.get(rid, "review", db=db)
     if action == "pause":
         item["status"] = "paused"
     elif action == "resume":
@@ -55,10 +61,10 @@ def update_review(store, rid, *, action, rating=None, now=None, feedback=None):
         item.update(due_at=next_review_time(store, now, interval, item["course"]), cycle=item["cycle"] + 1, status="active")
     else:
         raise ValueError("无效的复习操作")
-    for alert in store.list("study_alert"):
+    for alert in store.list("study_alert", db=db):
         if alert.get("review_id") == rid and not alert.get("handled"):
-            store.save("study_alert", {**alert, "handled": True}, alert["id"])
-    return store.save("review", item, rid)
+            store.save("study_alert", {**alert, "handled": True}, alert["id"], db=db)
+    return store.save("review", item, rid, db=db)
 
 
 class ReviewScheduler:

@@ -17,17 +17,20 @@ function harness({storage, home: initialHome = {}, onChat, course = 'OS'} = {}) 
       append(...children) { this.children.push(...children); },
       replaceChildren(...children) { this.children = children; },
       addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); },
-      setAttribute() {}, scrollIntoView() {}, focus() {}, close() {}, showModal() {}, contains() { return false; },
+      setAttribute() {}, scrollIntoView() {}, focus() {}, close() { this.open = false; }, showModal() { this.open = true; }, contains() { return false; },
       async emit(type, event = {}) { for (const fn of this.listeners[type] || []) await fn(event); await settle(); },
     };
   }
   const node = id => { if (!nodes.has(id)) nodes.set(id, element()); return nodes.get(id); };
   node('course').value = course; node('course').options = [{value: ''}, {value: 'OS'}];
+  const budgets = ['15', '30', '60', 'custom'].map(value => ({value, checked: value === '30'}));
   const context = {
     URLSearchParams, setInterval(fn) { timers.push(fn); }, matchMedia: () => ({matches: true}),
     crypto: {randomUUID: () => `request-${instance}-${++sequence}`},
     sessionStorage: {getItem: key => saved.get(key) ?? null, setItem: (key, value) => saved.set(key, String(value)), removeItem: key => saved.delete(key)},
-    document: {getElementById: node, createElement: element, querySelector: selector => selector === 'dialog[open]' ? null : node(selector), querySelectorAll: () => [],
+    document: {getElementById: node, createElement: element,
+      querySelector: selector => selector === 'dialog[open]' ? null : selector === 'input[name="today-budget"]:checked' ? budgets.find(radio => radio.checked) : node(selector),
+      querySelectorAll: selector => selector === 'input[name="today-budget"]' ? budgets : [],
       addEventListener(type, fn) { (events[type] ||= []).push(fn); }, body: {scrollHeight: 1000}},
     window: {innerHeight: 500, scrollY: 0},
     AssistantClient: {async api(route, options) {
@@ -49,6 +52,13 @@ function harness({storage, home: initialHome = {}, onChat, course = 'OS'} = {}) 
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, 'study-conversation.js'), 'utf8'), context);
   function all(root) { return [root, ...root.children.flatMap(all)]; }
   return {node, requests, updates, saved, ready: settle,
+    async chooseMinutes(value) {
+      const preset = ['15', '30', '60'].includes(String(value)) ? String(value) : 'custom';
+      for (const radio of budgets) radio.checked = radio.value === preset;
+      node('today-minutes').value = String(value);
+      await node('today-form').emit('change');
+    },
+    async confirmToday() { await node('today-form').emit('submit', {preventDefault() {}}); },
     button(root, label) { const button = all(node(root)).find(n => n.tag === 'button' && n.textContent === label); assert.ok(button, label); return button; },
     async submit() { await node('ask-form').emit('submit', {preventDefault() {}}); },
     async type(text) { node('question').value = text; await node('question').emit('input'); },
@@ -59,11 +69,52 @@ function harness({storage, home: initialHome = {}, onChat, course = 'OS'} = {}) 
 test('Today uses its own inputs and preserves unrelated draft text, attachments and course', async () => {
   const h = harness(); await h.ready();
   await h.node('open-today').emit('click');
+  assert.equal(h.requests.length, 0);
+  await h.chooseMinutes(60); await h.confirmToday();
   assert.equal(h.requests[0].purpose, 'today'); assert.deepEqual(h.requests[0].attachments, []);
+  assert.match(h.requests[0].question, /60 分钟/);
+  assert.equal(h.requests[0].course, '');
   assert.equal(h.node('question').value, 'My unsent question');
   assert.equal(h.node('course').value, 'OS');
   assert.equal(JSON.parse(h.saved.get('study-draft-files'))[0].id, 'draft-file');
   assert.equal(h.saved.get('study-draft-text'), 'My unsent question');
+});
+
+test('opening or dismissing Today makes no request and keeps the draft intact', async () => {
+  const h = harness(); await h.ready();
+  await h.node('open-today').emit('click');
+  assert.equal(h.node('today-dialog').open, true);
+  await h.node('close-today').emit('click');
+  assert.equal(h.node('today-dialog').open, false);
+  assert.equal(h.requests.length, 0);
+  assert.equal(h.node('question').value, 'My unsent question');
+  assert.equal(h.saved.has('study-today-minutes'), false);
+});
+
+test('custom Today duration is validated and restored after reload', async () => {
+  const h = harness(); await h.ready(); await h.node('open-today').emit('click');
+  for (const invalid of ['', '0', '241', '12.5', 'invalid']) {
+    await h.chooseMinutes(invalid); await h.confirmToday();
+    assert.equal(h.requests.length, 0);
+    assert.equal(h.node('today-error').hidden, false);
+    assert.equal(h.node('today-dialog').open, true);
+  }
+  await h.chooseMinutes(45); await h.confirmToday();
+  assert.match(h.requests[0].question, /45 分钟/);
+  const next = harness({storage: h.saved}); await next.ready(); await next.node('open-today').emit('click');
+  assert.equal(next.node('today-minutes').value, '45');
+  assert.equal(next.node('custom-minutes-field').hidden, false);
+  assert.equal(next.requests.length, 0);
+});
+
+test('Today stays open with feedback when another request is running', async () => {
+  let finish;
+  const h = harness({onChat: () => new Promise(resolve => { finish = resolve; })});
+  await h.ready(); await h.submit(); await h.node('open-today').emit('click'); await h.confirmToday();
+  assert.equal(h.requests.length, 1);
+  assert.equal(h.node('today-dialog').open, true);
+  assert.match(h.node('today-error').textContent, /上一条消息正在处理/);
+  finish({}); await settle();
 });
 
 test('retrying a failed turn keeps its original request and review ID, leaving the new draft alone', async () => {

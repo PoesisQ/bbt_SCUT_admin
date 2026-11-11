@@ -34,6 +34,7 @@ public class DesktopLauncher : ApplicationContext {
         var iconFile=Path.Combine(Root,"extension","icons","assistant.ico");
         tray=new NotifyIcon {Text=Title,Icon=File.Exists(iconFile)?new Icon(iconFile):SystemIcons.Application,Visible=true};
         var menu=new ContextMenuStrip();menu.Items.Add("打开学习助手",null,(s,e)=>Open());
+        menu.Items.Add("在 WorkBuddy 学习",null,(s,e)=>OpenWorkBuddy());
         menu.Items.Add("打开百步梯",null,(s,e)=>Process.Start("https://video.jw.scut.edu.cn/"));
         menu.Items.Add("使用说明",null,(s,e)=>Process.Start("https://github.com/PoesisQ/bbt_SCUT_admin#readme"));
         menu.Items.Add(new ToolStripSeparator());
@@ -42,6 +43,20 @@ public class DesktopLauncher : ApplicationContext {
         var timer=new System.Windows.Forms.Timer {Interval=350};
         timer.Tick+=(s,e)=>{if(OpenEvent.WaitOne(0))Open();};timer.Start();
         Open();
+    }
+    async void OpenWorkBuddy() {
+        try {
+            await Task.Run(()=>{
+                string python=Path.Combine(Root,"runtime","python.exe");
+                if(!File.Exists(python))python=Path.Combine(Root,".venv","Scripts","python.exe");
+                string script=Path.Combine(Root,"scripts","prepare_workbuddy.py");
+                var psi=new ProcessStartInfo(python,"-X utf8 \""+script+"\" --desktop open") {WorkingDirectory=Root,UseShellExecute=false,CreateNoWindow=true};
+                using(var p=Process.Start(psi)){
+                    if(!p.WaitForExit(12000)||p.ExitCode!=0)
+                        throw new Exception("请从开始菜单打开 WorkBuddy。首次接入可在学习助手首页准备连接器。");
+                }
+            });
+        }catch(Exception ex){MessageBox.Show(ex.Message,Title,MessageBoxButtons.OK,MessageBoxIcon.Information);}
     }
     async void Open() {
         if(starting)return;starting=true;

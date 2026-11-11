@@ -1,0 +1,65 @@
+{
+  "name": "scut-learning-team",
+  "version": "0.2.0",
+  "description": "Reviews classroom evidence and prepares cited quizzes in WorkBuddy.",
+  "author": {
+    "name": "PoesisQ",
+    "email": "PoesisQ@users.noreply.github.com"
+  },
+  "homepage": "https://github.com/PoesisQ/bbt_SCUT_admin",
+  "license": "MIT",
+  "agents": [
+    "./agents/scut-learning-team-lead.md",
+    "./agents/scut-quiz-writer.md",
+    "./agents/scut-evidence-reviewer.md"
+  ],
+  "expertType": "team",
+  "agentName": "scut-learning-team-lead",
+  "teamInfo": {
+    "leadAgent": "scut-learning-team-lead",
+    "memberAgents": ["scut-quiz-writer", "scut-evidence-reviewer"]
+  },
+  "displayName": {"en": "SCUT Course Review Team", "zh": "SCUT 课程复习组"},
+  "profession": {"en": "Course Review Team", "zh": "课程复习组"},
+  "displayDescription": {
+    "en": "Use selected course sources to prepare practice sheets and review conflicting statements with page and video references.",
+    "zh": "为学生核对课件与课堂原话，按主题编写带出处的练习题单，并检查引文、推导条件和证据缺口。"
+  },
+  "avatar": "avatars/team.png",
+  "categoryId": "15-Education",
+  "defaultInitPrompt": {"en": "Prepare a practice sheet from one of my courses.", "zh": "用我这门课的资料出一套带解析和出处的题。"},
+  "plugin": "scut-learning-team",
+  "tags": [
+    {"en": "Course evidence", "zh": "课堂出处"},
+    {"en": "Practice sheets", "zh": "复习题单"},
+    {"en": "Source comparison", "zh": "来源核对"}
+  ],
+  "quickPrompts": [
+    {"en": "Prepare a practice sheet from one of my courses.", "zh": "用我这门课的资料出一套带解析和出处的题。"},
+    {"en": "Check a conflict between lecture captions and slides.", "zh": "帮我核对一处字幕和课件的说法。"},
+    {"en": "Compare a classroom statement with a public reference.", "zh": "对照公开资料，看看老师这句话适用的条件。"}
+  ],
+  "members": [
+    {
+      "id": "scut-learning-team-lead",
+      "name": {"en": "Course Tutor", "zh": "课程导师"},
+      "profession": {"en": "Study Workflow Lead", "zh": "复习任务主理人"},
+      "avatar": "avatars/team.png",
+      "role": "lead"
+    },
+    {
+      "id": "scut-quiz-writer",
+      "name": {"en": "Quiz Writer", "zh": "出题员"},
+      "profession": {"en": "Evidence-grounded Quiz Writer", "zh": "课程出题"},
+      "avatar": "avatars/team.png",
+      "role": "member"
+    },
+    {
+      "id": "scut-evidence-reviewer",
+      "name": {"en": "Evidence Reviewer", "zh": "证据复核员"},
+      "profession": {"en": "Evidence and Reasoning Reviewer", "zh": "原文与推导复核"},
+      "avatar": "avatars/team.png",
+      "role": "member"
+    }
+  ]
+}

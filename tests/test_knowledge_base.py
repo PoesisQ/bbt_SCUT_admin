@@ -9,6 +9,7 @@ from unittest.mock import patch
 from assistant_service.study_agent.storage import StudyStore
 from assistant_service.study_agent.concepts import expand_query, register_concept
 from assistant_service.study_agent.knowledge_base import search_knowledge_base, prepare_quiz
+from assistant_service.study_agent.knowledge import set_policy
 from assistant_service.study_agent.mcp import Server, TOOLS
 
 
@@ -18,7 +19,7 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.store = StudyStore(Path(self.temp.name))
         self.slides = self.source("private/slides.pdf", "slides-v1", [
             "A condition variable waits inside a while loop to recheck the predicate.",
-            "A spurious wakeup can return without a signal."], course="OS")
+            "A condition variable can return after a spurious wakeup without a signal."], course="OS")
         self.speech = self.source("private/lesson1", "speech-v1", [
             "条件变量必须重新检查谓词，防止虚假唤醒。"], course="OS", kind="school_subtitle")
         self.other = self.source("other", "other-v1", [
@@ -53,6 +54,34 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertIn("reliability", item)
         self.assertIn("policy", item)
         self.assertIn("location", item)
+        self.assertEqual(item["source_version"], "slides-v1")
+        self.assertIs(item["active"], True)
+
+    def test_cross_course_top_result_ranks_body_before_title_and_alphabet(self):
+        self.store.source(origin="unrelated", course="A unrelated", title="Synchronous reset",
+                          kind="material", fingerprint="title-only",
+                          chunks=[{"text": "Information about buses.", "locator": {"page": 1}}])
+        best = self.source("relevant", "z-v1", ["A synchronous reset is sampled at the clock edge."], course="Z design")
+        result = search_knowledge_base(self.store, "synchronous reset", limit=1)
+        self.assertEqual(result["items"][0]["source_id"], best["id"])
+        self.assertEqual(result["items"][0]["query_match"]["basis"], "phrase")
+
+    def test_one_course_candidate_pool_prioritizes_actual_body_matches(self):
+        self.store.source(origin="lots-of-title-hits", course="Design", title="Synchronous reset",
+                          kind="material", fingerprint="titles", chunks=[{"text": "Bus."}] * 32)
+        best = self.source("matched-body", "design-v1", ["A synchronous reset is sampled at the clock edge."],
+                           course="Design")
+        hits = self.store.search("synchronous reset", "Design", 1)
+        self.assertEqual(hits[0]["source_id"], best["id"])
+
+    def test_budget_counts_returned_payload_and_keeps_complete_chunks(self):
+        self.source("long", "long-v1", ["condition variable " + "原文" * 9000], course="Large")
+        selected = self.source("short", "short-v1", ["condition variable waits."], course="Large")
+        found = search_knowledge_base(self.store, "condition variable", "Large")
+        self.assertEqual([e["source_id"] for e in found["items"]], [selected["id"]])
+        size = sum(len(json.dumps(e, ensure_ascii=False, separators=(",", ":"))) for e in found["items"])
+        self.assertEqual(size, found["budget"]["characters"])
+        self.assertTrue(found["budget"]["deferred"])
 
     def test_terminology_expansion_reaches_english_chunks(self):
         """The retrieval used by reasoner.retrieve() must reach English chunks via Chinese aliases."""
@@ -110,6 +139,18 @@ class KnowledgeBaseTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             prepare_quiz(self.store, "OS", "")
 
+    def test_quiz_returns_only_supported_slots_and_reuses_search_rows(self):
+        self.store.source(origin="title", course="Design", title="setup time",
+                          kind="material", fingerprint="title-v1",
+                          chunks=[{"text": "The document index."}, {"text": "The setup is complete."}])
+        self.assertEqual(prepare_quiz(self.store, "Design", "setup time")["status"], "needs_sources")
+        source = self.source("real", "real-v1", ["Setup time precedes the active clock edge."], course="Design")
+        with patch.object(self.store, "evidence", side_effect=AssertionError("Do not reread hits")):
+            quiz = prepare_quiz(self.store, "Design", "setup time", count=4, delivery="worksheet")
+        self.assertEqual(quiz["status"], "partial")
+        self.assertEqual(quiz["delivery"], "worksheet")
+        self.assertEqual([s["evidence_ids"] for s in quiz["slots"]], [[source["id"] + ":0"]])
+
     def test_mcp_exposes_knowledge_base_and_quiz_tools(self):
         server = Server(self.store)
         server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}})
@@ -119,7 +160,7 @@ class KnowledgeBaseTests(unittest.TestCase):
             return server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call",
                                   "params": {"name": name, "arguments": args}})
 
-        self.assertEqual(len(TOOLS), 22)
+        self.assertEqual(len(TOOLS), 25)
         names = {tool["name"] for tool in TOOLS}
         self.assertIn("search_knowledge_base", names)
         self.assertIn("prepare_quiz", names)
@@ -131,4 +172,27 @@ class KnowledgeBaseTests(unittest.TestCase):
         status = json.loads(call("study_connection_status", {})["result"]["content"][0]["text"])
         self.assertTrue(status["capabilities"]["knowledge_base"])
         self.assertTrue(status["capabilities"]["quiz_preparation"])
+        self.assertTrue(status["capabilities"]["quote_verification"])
         self.assertFalse(status["capabilities"]["automatic_grading"])
+
+    def test_mcp_checks_literal_quotes_and_rejects_unavailable_versions(self):
+        source = self.source("wrapped", "wrap-v1", ["Lock the\nmutex."], course="OS")
+        eid, another = source["id"] + ":0", self.other["id"] + ":0"
+        server = Server(self.store)
+        server.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize"})
+        server.handle({"jsonrpc": "2.0", "method": "notifications/initialized"})
+
+        def check(*pairs):
+            return server.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                "name": "verify_study_quotes", "arguments": {"course": "OS",
+                "citations": [{"evidence_id": key, "quote": quote} for key, quote in pairs]}}})
+
+        payload = json.loads(check((eid, "Lock the mutex."), (eid, "Unlock the mutex."),
+                                   (another, "Operating systems"))["result"]["content"][0]["text"])
+        self.assertEqual([item["status"] for item in payload["items"]], ["matched", "quote_not_found", "unavailable"])
+        self.assertEqual(payload["items"][0]["quote"], "Lock the\nmutex.")
+        self.assertEqual(payload["items"][0]["locator"], {"page": 1})
+        set_policy(self.store, source["id"], role="slides", excluded=True)
+        payload = json.loads(check((eid, "Lock the mutex."))["result"]["content"][0]["text"])
+        self.assertEqual(payload["items"][0]["status"], "unavailable")
+        self.assertEqual(check((eid, 123))["error"]["code"], -32602)

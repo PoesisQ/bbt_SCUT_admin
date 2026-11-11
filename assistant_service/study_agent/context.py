@@ -11,11 +11,13 @@ def evidence_payload(item):
         "external_provenance":{k:v for k,v in item.get("source_meta",{}).items()
             if k in {"coverage","doi","provider","publication_status","family","retrieved_at"}}}
 
-def pack_evidence(items, budget=13000):
+def pack_evidence(items, budget=13000, *, project=evidence_payload, limit=None):
     result=[];seen=set();used=0;dropped=[]
     for item in items:
+        if limit is not None and len(result) >= limit:
+            break
         if item["id"] in seen:continue
-        seen.add(item["id"]);clean=evidence_payload(item)
+        seen.add(item["id"]);clean=project(item)
         size=len(json.dumps(clean,ensure_ascii=False,separators=(",",":")))
         if used+size>budget:
             dropped.append({"id":item["id"],"reason":"本轮上下文预算，仍可继续检索"});continue
@@ -29,6 +31,8 @@ def history_context(history,question,budget=2000):
         item={"question":row.get("question","")[:280]}
         if i<2:
             item["answer"]=row.get("answer","")[:650]
+            if row.get("student_answer"):
+                item["student_answer"] = row["student_answer"][:650]
             if row.get("next_question"):item["next_question"]=row["next_question"][:160]
         size=len(json.dumps(item,ensure_ascii=False))
         if used+size>budget:break
