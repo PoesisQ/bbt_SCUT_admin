@@ -2,7 +2,7 @@
 
 整套题单由课程导师在 WorkBuddy 内取材，再交给出题员和证据复核员。遇到课件与课堂表述不一致时，只交由证据复核员核对。单题、找出处和今日清单可以直接在当前 WorkBuddy 对话完成。
 
-使用 WorkBuddy 桌面端连接本地 `scut-study` MCP 0.6.0。在个人版可从“专家 → 我的专家 → 专家团 → 创建专家团”设置角色。开放平台打包格式见[专家团规范](https://open.workbuddy.cn/docs/expert-team)。
+在 WorkBuddy 个人版可从“专家 → 我的专家 → 专家团 → 创建专家团”设置角色。使用选定的资料库附件可直接出题和复核；检索本机课程或保存学习进度时连接 `scut-study` MCP 0.6.0。开放平台打包格式见[专家团规范](https://open.workbuddy.cn/docs/expert-team)。
 
 仓库根目录执行 `python scripts/build_workbuddy_team.py` 生成专家团 ZIP，内容包括角色定义、配置和项目头像。它是提交评审前可审阅的专家团配置。本机连接方式由各自的 `prepare_workbuddy.py --install` 生成。
 
