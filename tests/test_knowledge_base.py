@@ -83,6 +83,24 @@ class KnowledgeBaseTests(unittest.TestCase):
         self.assertEqual(size, found["budget"]["characters"])
         self.assertTrue(found["budget"]["deferred"])
 
+    def test_cross_course_search_ranks_relevance_before_course_name(self):
+        self.source("weak", "weak", ["predicate"], course="AAA")
+        strong = self.source("strong", "strong", ["predicate mutex"], course="ZZZ")
+        found = search_knowledge_base(self.store, "predicate mutex", limit=1)
+        self.assertEqual(found["items"][0]["source_id"], strong["id"])
+
+    def test_quiz_ignores_old_versions_and_excluded_sources(self):
+        from assistant_service.study_agent.knowledge import set_policy
+        self.source("private/slides.pdf", "slides-v2", ["A mutex protects shared state."])
+        # The old condition-variable slide remains available for historical citations.
+        self.assertFalse(self.store.evidence(self.slides["id"] + ":0")["active"])
+        quiz = prepare_quiz(self.store, "OS", "condition variable")
+        self.assertEqual(quiz["status"], "needs_sources")
+        current = prepare_quiz(self.store, "OS", "mutex", count=1)
+        self.assertEqual(current["status"], "ready")
+        set_policy(self.store, current["evidence"][0]["source_id"], role="reference", excluded=True)
+        self.assertEqual(prepare_quiz(self.store, "OS", "mutex")["status"], "needs_sources")
+
     def test_terminology_expansion_reaches_english_chunks(self):
         """The retrieval used by reasoner.retrieve() must reach English chunks via Chinese aliases."""
         english_id = self.slides["id"] + ":0"

@@ -122,3 +122,17 @@ WorkBuddy 官方支持 MCP 连接器与 CLI 连接器，本地 MCP 可使用 std
 - token 用量来自模型响应，未返回时显示未知。缓存 tokens 是提供商报告的命中量，本地核对复用单独记录；字符预算与耗时不换算成虚构费用。参考 [DeepSeek 上下文缓存文档](https://api-docs.deepseek.com/guides/kv_cache/)。
 
 覆盖的回归包括：运行中可读取事件、增量游标、并发隔离、敏感字段脱敏、API 鉴权、缓存失效、旧资料库补索引、来源排除、上下文去重、异步批次、页面切换竞态。查看器只读，没有通过它修改提示词、重放有副作用工具或导出含课程内容的运行快照。
+
+## 本地向量检索（AG-04/12，2026-11-12）
+
+安装可选依赖 `uv sync --extra study --extra vector`，将已下载完整的 Sentence Transformers 多语言句向量模型目录设为环境变量 `STUDY_EMBEDDING_MODEL` 后重启服务。例如 PowerShell：
+
+```powershell
+$env:STUDY_EMBEDDING_MODEL = 'D:\models\multilingual-embedding'
+```
+
+目录需包含模型权重、tokenizer 和 Sentence Transformers 配置。本实现只加载本地文件（CPU），不隐式下载、不调用外部嵌入 API、不复用 DeepSeek Key；模型体积随选择而变，独立于基础安装包。接口依据 [SentenceTransformer 官方文档](https://sbert.net/docs/package_reference/sentence_transformer/model.html)。
+
+`vectors.py` 在首次检索时分批建立 SQLite 向量缓存；模型文件版本和片段正文变更会使缓存失效。首次使用大课程可能较慢；当前为精确余弦扫描，尚无大规模性能验收。FTS 与余弦召回通过 RRF 合并，向量相似度最低 0.35（工程初值，未经课程评测校准）。课程、有效版本、来源排除仍受约束，保留证据 ID 与定位。向量相似不等于事实支持，组卷继续要求文本匹配，不把纯语义命中直接作为出题依据。
+
+未配置模型时仍为关键词模式；加载/编码失败回退关键词，知识库返回 `vector_retrieval` 状态与异常类型。删除环境变量即可停用；SQLite 缓存与原文均属于本地学习数据，不进入公开仓库。

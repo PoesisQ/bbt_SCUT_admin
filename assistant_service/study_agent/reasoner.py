@@ -279,7 +279,8 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
 
     def retrieve(query):
         emit("tool.start", "检索本课资料", {"tool":"search_sources", "arguments":{"query":query,"course":course}})
-        candidates, _, _ = retrieve_evidence(store, query, course, 12)
+        candidates, terminology, _ = retrieve_evidence(store, query, course, 12)
+        emit("retrieval.status", "检索方式", {"vector_retrieval": {name: value.get("vector_retrieval") for name, value in terminology.items()}})
         references = [e for e in candidates if e["kind"] not in {"asr", "school_subtitle", "image_reading", "student_report"}]
         references.sort(key=lambda e: not e.get("policy", {}).get("trusted"))
         lectures = classroom_evidence(store, course, query, 6) if purpose == "classroom" else []
