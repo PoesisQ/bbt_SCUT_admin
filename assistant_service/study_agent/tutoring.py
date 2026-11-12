@@ -16,7 +16,7 @@ from .concepts import topic_key, catalog as concept_catalog
 from .index_state import index_status
 from .knowledge_base import retrieve_evidence
 
-VERSION = "0.6.0"
+VERSION = "0.7.0"
 MAX_CONTEXT = 16000
 
 
@@ -60,6 +60,14 @@ def verify_study_quotes(store, course, citations):
                         **{key: source[key] for key in ("location", "locator", "source_version", "reliability")}})
     return {"course": course, "all_matched": all(item["status"] == "matched" for item in results),
             "items": results, "scope": "核对原句、来源版本与位置。知识主张是否成立还需比较前提与上下文。"}
+
+
+def task_deadline_fields(store, task):
+    notice = task.get("deadline_evidence")
+    if notice:
+        checked = verify_study_quotes(store, task["course"], [notice])["items"][0]
+        notice = {**notice, "status": checked["status"]}
+    return {"deadline": task.get("deadline"), "deadline_at": task.get("deadline_at"), "deadline_evidence": notice}
 
 
 def evidence_context(store, evidence_id, radius=1):
@@ -124,7 +132,8 @@ def prepare_context(store, course, topic, session_id=""):
             "sources": [{k: s[k] for k in ("id", "title", "kind", "fingerprint")} for s in sources[:24]],
             "sources_omitted": max(0, len(sources)-24),
             "evidence": packed,
-            "confirmed_tasks": [{k: t.get(k) for k in ("id", "title", "deadline", "estimate_min", "estimate_max")}
+            "confirmed_tasks": [{k: t.get(k) for k in ("id", "title", "estimate_min", "estimate_max")}
+                                | task_deadline_fields(store, t)
                                 for t in select_memory(tasks, topic, 4, fallback=True)],
             "confirmed_requirements": [{k: r.get(k) for k in ("id", "detail", "title", "source")}
                                        for r in select_memory(requirements, topic, 4)],
@@ -201,6 +210,24 @@ def session_view(store, session_id):
         from .practice import practice_view
         value["practice"] = practice_view(store, store.get(item["practice_id"], "practice"))
         value["needs_source_refresh"] |= value["practice"]["source_stale"]
+        with store.connect() as db:
+            earlier = db.execute("""SELECT data FROM entities WHERE kind='practice' AND id<>?
+                AND json_extract(data,'$.session_id')=? AND json_array_length(data,'$.attempts')>0
+                ORDER BY rowid DESC LIMIT 3""", (item["practice_id"], session_id)).fetchall()
+        value["previous_practices"] = []
+        for row in earlier:
+            practice = practice_view(store, json.loads(row[0]))
+            value["previous_practices"].append({k: practice[k] for k in
+                ("id", "topic", "question", "last_attempt", "citations", "source_stale")})
+    with store.connect() as db:
+        row = db.execute("""SELECT t.data FROM entities d
+            JOIN entities t ON t.kind='task' AND t.id=json_extract(d.data,'$.task_id')
+            WHERE d.kind='task_deadline_change' AND json_extract(d.data,'$.session_id')=?
+            AND json_extract(d.data,'$.status')='applied' ORDER BY d.rowid DESC LIMIT 1""", (session_id,)).fetchone()
+    if row:
+        task = json.loads(row[0])
+        value["linked_task"] = ({k: task.get(k) for k in ("id", "title", "deadline_change_id")}
+                                | task_deadline_fields(store, task))
     return value
 
 

@@ -13,6 +13,17 @@ scripts/markmap/node_modules/
 # Auth state (contains session cookies)
 data/
 
+# Only the static site's synthetic fixtures are public.
+!/competition/site/data/
+/competition/site/data/*
+!/competition/site/data/corpus.json
+!/competition/site/data/corpus.js
+!/competition/site/data/lesson-sample.js
+!/competition/site/data/neuroscience-sample.js
+!/competition/site/data/vectors.json
+!/competition/site/data/songzhen27-waveform.png
+!/competition/site/data/songzhen27-notes.zip
+
 # Output subtitles
 output/
 
@@ -31,8 +42,31 @@ docs/
 extension/local-connection.js
 mobile/android/.gradle/
 
-# Competition originals and personal study experiments stay local
-AgenticStuff/*.docx
+# Competition materials and internal working notes
+/.wbapp_*.genie
+/*.docx
+/AgenticStuff/
+/COMPETITION_PLAN.md
+/IMPLEMENTATION_PLAN.md
+/WORKBUDDY_LEARNING_ROADMAP.md
+/WORKBUDDY_RESEARCH.md
+/plans/
+/planning/ACCEPTANCE.md
+/planning/CODE_UX_REVIEW.md
+/planning/FEASIBILITY.md
+/planning/FRONTEND_REVIEW.md
+/planning/PUBLIC_KNOWLEDGE_PLAN.md
+/planning/RAG_REVIEW_*.md
+/planning/WORKBUDDY_CONTEST.md
+/planning/WORKBUDDY_REVIEW.md
+/competition/*
+!/competition/site/
+
+# Optional browser inference binaries; see competition/site/README.md
+/competition/site/models/bge-small-zh-v1.5/onnx/model_int8.onnx
+/competition/site/vendor/transformers/ort-wasm-simd-threaded.jsep.wasm
+
+# Personal study experiments
 .test-tmp/
 study-providers.json
 

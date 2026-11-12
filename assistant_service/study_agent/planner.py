@@ -11,11 +11,21 @@ def stamp(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(TZ)
 
 
+def task_deadline(task):
+    """Keep a date-only task open through the end of its local due day."""
+    if task.get("deadline_at"):
+        return stamp(task["deadline_at"])
+    if task.get("deadline"):
+        return datetime.combine(date.fromisoformat(task["deadline"]), time.max, TZ)
+    return datetime.max.replace(tzinfo=TZ)
+
+
 def make_plan(tasks, *, start: date, days=7, daily_minutes=90, start_hour=19, busy=None):
     """Deterministic, capacity-limited proposal. Durations are user estimates, not model certainty."""
     busy = [(stamp(b["start"]), stamp(b["end"])) for b in (busy or [])]
     active = [t for t in tasks if t.get("status") == "accepted" and not t.get("completed")]
-    active.sort(key=lambda t: (t.get("deadline") or "9999-12-31", -t.get("difficulty", 3), t["id"]))
+    deadlines = {task["id"]: task_deadline(task) for task in active}
+    active.sort(key=lambda t: (deadlines[t["id"]], -t.get("difficulty", 3), t["id"]))
     scheduled, risks, remaining = [], [], {}
     for task in active:
         remaining[task["id"]] = max(0, task.get("estimate_max", 60) - task.get("spent_minutes", 0))
@@ -28,11 +38,12 @@ def make_plan(tasks, *, start: date, days=7, daily_minutes=90, start_hour=19, bu
         # Short blocks + recovery gaps, inside the stated daily availability window.
         while cursor + timedelta(minutes=15) <= end:
             possible = [t for t in active if remaining[t["id"]] > 0 and
-                        (not t.get("deadline") or local_day.isoformat() <= t["deadline"])]
+                        cursor + timedelta(minutes=1) <= deadlines[t["id"]]]
             if not possible:
                 break
             task = possible[0]
-            minutes = min(40, remaining[task["id"]], int((end - cursor).total_seconds() // 60))
+            finish_limit = min(end, deadlines[task["id"]]) if task.get("deadline_at") else end
+            minutes = min(40, remaining[task["id"]], int((finish_limit - cursor).total_seconds() // 60))
             finish = cursor + timedelta(minutes=minutes)
             conflicts = [(a, b) for a, b in busy if cursor < b and finish > a]
             if conflicts:
@@ -54,6 +65,50 @@ def make_plan(tasks, *, start: date, days=7, daily_minutes=90, start_hour=19, bu
                 risks.append({"task_id": task["id"], "text": f"距离截止还有 {available_days} 天，但这项任务的估计学习量已占大部分可用时间，建议本周开始。"})
     return {"status": "draft", "start_date": start.isoformat(), "days": days, "blocks": scheduled, "risks": risks,
             "assumptions": ["按耗时估计的上限排程，每段后留 10 分钟。", "只避开你已登记的忙碌时段；课表未确认时不保证无冲突。", "完成情况和耗时改变后需要重新生成；不会自动写入外部日历。"]}
+
+
+def revise_task_blocks(task, blocks, available, occupied, *, now, deadline):
+    """Fit only the affected task inside explicitly available time."""
+    keep, remove, after_deadline = [], [], []
+    remaining = max(0, (task.get("estimate_max") or 0) - (task.get("spent_minutes") or 0))
+    for block in blocks:
+        start, end = stamp(block["start"]), stamp(block["end"])
+        target = block.get("task_id") == task["id"]
+        completed = block.get("completed") or block.get("status") == "completed"
+        if target and start > now and end > deadline and not (block.get("locked") or completed):
+            remove.append(block)
+            continue
+        keep.append(block)
+        occupied.append((start, end))
+        if target and end > now and not completed:
+            if end > deadline:
+                after_deadline.append(block)
+            usable = max(0, int((min(end, deadline) - max(start, now)).total_seconds() // 60))
+            remaining = max(0, remaining - usable)
+
+    added = []
+    next_minute = now.replace(second=0, microsecond=0) + timedelta(minutes=1)
+    for start, end in sorted(available):
+        cursor, finish = max(start, next_minute), min(end, deadline)
+        # Include earlier additions when the caller supplied overlapping windows.
+        for busy_start, busy_end in sorted([*occupied, (finish, finish)]):
+            if remaining and cursor < finish and cursor < busy_start:
+                minutes = min(remaining, int((min(busy_start, finish) - cursor).total_seconds() // 60))
+                if minutes:
+                    block_end = cursor + timedelta(minutes=minutes)
+                    added.append({"task_id": task["id"], "course": task["course"], "title": task["title"],
+                                  "start": cursor.isoformat(), "end": block_end.isoformat(),
+                                  "reason": "按新截止时间和已确认的空闲时段安排剩余工作"})
+                    occupied.append((cursor, block_end))
+                    remaining -= minutes
+            cursor = max(cursor, busy_end)
+            if not remaining or cursor >= finish:
+                break
+    next_block = min((b for b in [*keep, *added] if b.get("task_id") == task["id"]
+                      and not (b.get("completed") or b.get("status") == "completed")
+                      and now < stamp(b["end"]) <= deadline), key=lambda b: stamp(b["start"]), default=None)
+    return keep, {"removed_blocks": remove, "added_blocks": added, "kept_after_deadline": after_deadline,
+                  "next_block": next_block, "unscheduled_minutes": remaining if task.get("estimate_max") is not None else None}
 
 
 def calendar(plan):

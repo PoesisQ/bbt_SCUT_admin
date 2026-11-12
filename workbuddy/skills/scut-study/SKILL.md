@@ -5,7 +5,7 @@ display_name_en: SCUT Study
 description: 用 SCUT 百步梯课堂记录和本地资料查出处、接着上次学习、讲清知识联系、做练习与安排复习。学生提到老师在哪讲过、从零复习、继续学、课件与课堂冲突、公开论文核对或今天先学什么时使用。通过 scut-study MCP 按需取证和保存真实学习进度，不猜文件或课程内容。
 description_zh: 查课堂出处，接着上次学，用课件与文献核对概念，根据作答安排下一步。
 description_en: Evidence-grounded tutoring across lectures, resumable learning sessions and reviews based on explicit student feedback.
-version: 0.6.0
+version: 0.7.0
 author: PoesisQ
 examples_zh:
   - 从头讲神经科学，概念旁写英文，不要只给重点清单。
@@ -27,6 +27,7 @@ examples_zh:
 | 从头学、讲深一点、接着学 | 读 `references/learning-flow.md`，恢复匹配目标后取本轮原文 | 只有学生提出时间预算才安排限时学习 |
 | 逐题练习、出一套题 | 读 `references/quiz-flow.md`。单题先恢复同一练习，题单按实际题位取材 | 只有需要跨课比较时才跨课搜索 |
 | 今天先学什么、只有若干分钟 | `plan_today_review` | 不编造期限，不把清单当已完成 |
+| 老师更新了任务期限 | 查任务 ID 和同课通知，核对发布者后用 `prepare_task_deadline_change` | 用户明确确认预览后才用 `confirm_task_deadline_change` |
 | 课堂与课件矛盾、要研究论文 | 读 `references/research-flow.md` | 不把检索命中当核验，不用外部论文推定考试范围 |
 | 录音、导入本地路径、批处理、导出文件 | 说明连接器当前边界，转学习助手操作 | 不声称工具清单之外的工作已完成 |
 
@@ -43,6 +44,8 @@ examples_zh:
 
 使用 `get_learning_session` 续接目标、上次问题和学生回答；新目标才 `open_learning_session`。学习上下文用 `prepare_learning_context` 打包，不把全部字幕塞进对话。尊重本次明确学习方式。只讲解时用teaching_mode=explain建立会话；已有会话用record_learning_progress保存该模式，恢复后继续讲解、直接展开示例，不出题或要求自评。只有学生主动要求练习才切回interactive，再每次出一道题等待回答。用 `list_course_concepts` 查本课有出处的别名，学生愿意练习时用 `prepare_term_practice` 分别检验认名、定义和应用；相关概念不能当同义词。词表只是候选名称索引，不是已确认知识或完整考纲。
 
+开始变式后，可从会话 `previous_practices` 读取至多三道近期已答题。需要成员独立诊断和出变式，或需要成员复核改期及说明局部重排时，可从专家中心召唤「SCUT 课程复习组」。
+
 `record_learning_progress` 保存讲解位置、下一步和暂停状态。单题由 `start_practice` 验证原句并保存，由 `submit_practice_answer` 写入实际原答，避免再用通用进度工具重复记录。只记录学生明确给出的自评。同一次写入重试保留 request_id，遇到版本冲突先重读。
 
 近期明确的低自评会参与今日复习排序，后续同主题的新自评取代旧值。带自评的练习作答会更新同一条复习安排。暂停或来源变更后先处理状态，再继续。学生要求暂停后记录 pause，之后明确要求继续才 resume。
@@ -52,6 +55,8 @@ examples_zh:
 从消息取实际分钟数；没有预算但明确要时间安排时，只问今天留多少时间。整课讲解不问这个问题。调用 `plan_today_review`；一般安排不沿用上一轮课程筛选，仅用户明确限定课程才传 `course`。
 
 保留返回的优先顺序、理由和用时。开始某项时，若有 `practice_id`，用 `get_learning_session` 找到当前题和进度。已完成的到期练习可按原文出一道新的回忆题。说明没排下的事项、需要核对的出处与未知期限。弱项说明须对应学生的自评或原始作答。
+
+改期预览用同课有效通知的原句与证据 ID，引用明确的日期和时刻，参数 `deadline_at` 带时区。教师身份有课程平台证据或由学生明确核实原始通知时才用 `verified_teacher`；转述或不明发布者用 `unverified`。预览交学生确认，`applied` 后再报告实际变化。换任务用 `get_task_deadline_change` 按任务 ID 回读。
 
 ## 讲解与证据
 
@@ -79,6 +84,6 @@ PPT同一图、相关示意图、字幕谈画图、实际板书画面、教师/�
 
 ## 边界与故障
 
-连接器目前有 25 个工具，覆盖课程查询、引文检查、复习清单、组卷取材和学习进度。录音、批量转写和本地资料导入从学习助手入口处理。回看学校原视频由学生在浏览器完成登录。
+连接器目前有 28 个工具，覆盖课程查询、引文检查、复习清单、组卷取材、学习进度和任务改期。录音、批量转写和本地资料导入从学习助手入口处理。回看学校原视频由学生在浏览器完成登录。
 
 连接失败核对MCP里的Python、脚本与资料目录；空检索先确认课程和索引范围。网络研究不可用时保留本地原句并说明缺口。来源更新要重新取证，不能静默沿用旧版。调用可以在学习助手运行详情回查；那里不展示模型内部思考。

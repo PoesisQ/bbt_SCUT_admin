@@ -279,7 +279,8 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
 
     def retrieve(query):
         emit("tool.start", "检索本课资料", {"tool":"search_sources", "arguments":{"query":query,"course":course}})
-        candidates, _, _ = retrieve_evidence(store, query, course, 12)
+        candidates, terminology, _ = retrieve_evidence(store, query, course, 12)
+        emit("retrieval.status", "检索方式", {"vector_retrieval": {name: value.get("vector_retrieval") for name, value in terminology.items()}})
         references = [e for e in candidates if e["kind"] not in {"asr", "school_subtitle", "image_reading", "student_report"}]
         references.sort(key=lambda e: not e.get("policy", {}).get("trusted"))
         lectures = classroom_evidence(store, course, query, 6) if purpose == "classroom" else []
@@ -303,7 +304,7 @@ def run_agent(store, provider, *, course, question, purpose="ask", history=None,
         for x in store.list("proposal") if x.get("course")==course and x.get("status")=="accepted" and x.get("proposal_kind")=="requirement"], question+" "+prior_topic, 4, fallback=bool(re.search(r"要求|规则|评分|考勤|提交|作业",question)))
     learner_state = select_memory([{"topic":p["question"], "attempt_count":len(p["attempts"]), "last_self_rating":p["attempts"][-1]["rating"]}
         for p in store.list("practice") if p.get("course")==course and p.get("attempts")], question+" "+prior_topic, 3)
-    tasks = select_memory([{k:t.get(k) for k in ("title","deadline","estimate_min","estimate_max","spent_minutes","completed")}
+    tasks = select_memory([{k:t.get(k) for k in ("title","deadline","deadline_at","estimate_min","estimate_max","spent_minutes","completed")}
         for t in sorted(store.list("task"),key=lambda t:t.get("deadline") or "9999") if t.get("course")==course and t.get("status")=="accepted" and not t.get("completed")], question+" "+prior_topic, 4, fallback=bool(re.search(r"做什么|任务|安排|截止|提交|作业|来得及",question)))
     knowledge = relevant_memory(store, course, question+" "+prior_topic, limit=4)
     # Confirmed memory is only a retrieval pointer; load its current originals before use.

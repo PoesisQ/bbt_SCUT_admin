@@ -2,7 +2,7 @@
 
 用一句话查课堂出处、接着上次学，或拿课件和论文对照课堂说法。学习目标、实际作答和自评保存在本机；WorkBuddy 按需读取相关片段，用自己的模型讲解和提问，不再套一遍 DeepSeek。
 
-当前版本 **0.6.0 / 25 个工具**。流程见[WorkBuddy Agent 设计](../planning/WORKBUDDY_AGENT.md)，技能入口是[SKILL.md](skills/scut-study/SKILL.md)。
+当前版本 **0.7.0 / 28 个工具**。流程见[WorkBuddy Agent 设计](../planning/WORKBUDDY_AGENT.md)，技能入口是[SKILL.md](skills/scut-study/SKILL.md)。[SCUT 课程复习组](expert-team/README.md)在此基础上组织错因复测和改期复核。
 
 ## 本机接入
 
@@ -16,7 +16,7 @@
 
 脚本把 `scut-study` 合并到 `%USERPROFILE%\.workbuddy\mcp.json`，把技能及 `references/` 规程一起安装到 `skills/scut-study/`。已有连接器保留，变更文件先备份；遇到同名的其他程序会停下，不覆盖。生成文件含本机路径，保存在数据目录的 `workbuddy/`，不要提交 GitHub。
 
-在 **专家·技能·连接器 → 连接器 → 自定义连接器** 检查 `scut-study`，首次连接按提示确认信任。新任务说“使用 SCUT 学习助手，检查连接”，应返回 **0.6.0 / 25 个工具**。迁移过目录时，先在 SCUT 首页点“切换到此资料目录”，再到 WorkBuddy 检查新配置并重连。如果仍显示旧工具数量，可在客户端的 MCP JSON 编辑器核对解释器、脚本和资料目录并保存。
+在 **专家·技能·连接器 → 连接器 → 自定义连接器** 检查 `scut-study`，首次连接按提示确认信任。新任务说“使用 SCUT 学习助手，检查连接”，应返回 **0.7.0 / 28 个工具**。迁移过目录时，先在 SCUT 首页点“切换到此资料目录”，再到 WorkBuddy 检查新配置并重连。如果仍显示旧工具数量，可在客户端的 MCP JSON 编辑器核对解释器、脚本和资料目录并保存。
 
 新建对话后可以这样说：
 
@@ -45,8 +45,11 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 | `find_classroom_mentions` | 跨课时找原句、课时、时间与回放地址 |
 | `search_course_sources` | 搜索本课字幕、教材、题目与外部参考 |
 | `read_study_evidence` | 展开一段原文，检查版本和是否停用 |
-| `list_confirmed_study_tasks` | 读取已确认且未完成的任务 |
+| `list_confirmed_study_tasks` | 读取已确认且未完成的任务、任务 ID 和已知的精确期限 |
 | `plan_today_review` | 在 1–240 分钟预算内排序任务与复习 |
+| `prepare_task_deadline_change` | 核对同课通知引文和精确期限，预览改期及受影响时段 |
+| `confirm_task_deadline_change` | 按用户确认的预览更新任务和计划，重试沿用同一变更 ID |
+| `get_task_deadline_change` | 按任务 ID 查看最近的改期及确认状态 |
 | `search_public_references` | 用公开概念词查论文和教材候选 |
 | `read_public_reference` | 读取候选正文或摘要，按问题返回最多三段原文和页码 |
 | `prepare_evidence_comparison` | 整理 2–6 段证据的出处、独立性和覆盖范围 |
@@ -54,7 +57,7 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 | `prepare_learning_context` | 一次取同课多来源原文、相关确认要求、任务和续接进度 |
 | `read_study_evidence_context` | 读取同一版本的前后片段，核对条件与发言转场 |
 | `open_learning_session` | 为明确学习目标建立本机会话；重试不重复创建 |
-| `get_learning_session` | 省略课程也能找最近目标，选中后恢复问题、作答及来源失效提示 |
+| `get_learning_session` | 找最近目标，选中后恢复当前题、至多三道近期已答题和来源状态 |
 | `list_course_concepts` | 分页查同课、有当前原文支持的术语名称与易混项 |
 | `prepare_term_practice` | 打包别名辨认、定义及应用的提问依据 |
 | `search_knowledge_base` | FTS5 检索带出处的完整片段，正文优先，可按课程或跨课程 |
@@ -76,9 +79,11 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 
 学生可自评：1=暂不能解释、2=需提示、3=可独立解释、4=可尝试迁移。不填就不生成分数。近期明确的低自评参与今日复习排序；同课程同主题的后续自评覆盖旧值的排序作用，历史事件保留。已有周期复习的暂停/延后安排不会被这条路径重复拉回。
 
-学习会话、讲解记录和共享题目保存在 `study-agent.sqlite3`。WorkBuddy 发起的题目可在网页作答，或换 WorkBuddy 任务接着写。同一题的题干、原答和引文沿用同一 ID。并发写入以 revision 检查版本，重试用 request_id 去重。原文改版或停用时保留旧记录并提示按当前资料出题。
+学习会话、讲解记录和共享题目保存在 `study-agent.sqlite3`。WorkBuddy 发起的题目可在网页作答，或换 WorkBuddy 任务接着写。同一题的题干、原答和引文沿用同一 ID；开始复测后仍可从 `previous_practices` 找到近期的原答。并发写入以 revision 检查版本，重试用 request_id 去重。原文改版或停用时保留旧记录并提示按当前资料出题。
 
 自评会设置题目的下次复习时间。最近低自评可在当天清单优先显示。练习从已有间隔复习发起时，共用那条复习记录。独立练习从今日清单回顾。暂停的主题在恢复后重新参与安排。
+
+收到教师改期通知后，先检查课程、任务、发布者和原句。预览使用已索引的通知证据，原句需有明确日期和时刻。展示新旧期限和时段变更，收到学生确认后再写入。发布者待核对时保留原期限。可用[松针-27 原创演示](demo/README.md#松针-27-专家团演示)走一遍。
 
 ## 文献怎样参与核对
 
@@ -112,7 +117,7 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 
 ### 0.5.4 · 2026-11-11
 
-检索与组卷的审查、修复和下一轮优先级见[WorkBuddy 审查](../planning/WORKBUDDY_REVIEW.md)。专家团配置按平台包规范提供课程导师、出题员和证据复核员，可本地构建 ZIP。当前客户端与协议验证分别记录在[验证记录](VALIDATION.md)。[专家团配置](expert-team/README.md)
+这一版提供最初的专家团配置与 ZIP 构建。现行五角色配置见[专家团说明](expert-team/README.md)，客户端与协议的验证范围见[验证记录](VALIDATION.md)。
 
 ### 0.5.0 · 2026-11-04
 
@@ -143,7 +148,7 @@ WorkBuddy 负责启动 MCP 进程。查已有资料时不需要先开学习网�
 
 本机已接入后，打开 WorkBuddy，进入“SCUT 学习助手”工作空间即可继续提问。新对话需要时用 `/scut-study` 选择技能，也可以直接说“使用 SCUT 学习助手”。
 
-当前没有发布公开 Agent 链接，`127.0.0.1` 不能作为评委可访问的链接。学校实际播放器的跳转定位仍需在登录环境验收。固定专家团和可视化工作流未部署；当前采用同一个 agent 按需取证，只有明确分歧才建议增加复核。
+无需安装即可打开[公开网页演示](https://scut-buxue-2026.app.workbuddy.host/?sharecode=YRGCACKBQL)。网页使用原创样例，与本机连接器及客户端专家团分别运行。学校实际播放器的跳转定位仍需在登录环境验收。
 
 ## 平台依据
 

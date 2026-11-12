@@ -1,0 +1,31 @@
+.records-tabs { flex-wrap: wrap; }
+.records-tabs button { white-space: nowrap; }
+.records-paragraph { white-space: pre-line; overflow-wrap: anywhere; }
+.records-topic-picker { display: grid; max-width: 370px; gap: 7px; margin-bottom: 18px; font-size: 13px; color: #64718c; }
+.records-topic-picker select { width: 100%; }
+.records-compare { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, .8fr); gap: 14px; }
+.records-compare article { min-width: 0; overflow-wrap: anywhere; }
+.records-compare button { font-size: 12px; margin-top: 7px; }
+.records-waveform { margin: 14px 0 0; }
+.records-waveform img { display: block; width: 100%; height: auto; border: 1px solid #e2e5ec; border-radius: 8px; }
+.records-waveform figcaption { margin-top: 5px; font-size: 12px; }
+.records-map { padding: 14px; background: white; border: 1px solid #e2e5ec; border-radius: 16px; }
+.records-map button { font-size: 12px; }
+.records-map svg { display: block; width: 100%; height: clamp(320px, 52vh, 490px); }
+.records-transcript-search { max-width: 370px; margin-bottom: 14px; }
+.transcript .selected-segment { background: #edf2fb; border-radius: 8px; padding-inline: 10px; }
+.detail-actions .button-link { text-decoration: none; }
+.note-card.records-sample { grid-column: 1 / -1; min-height: 0; }
+.note-card.records-import { min-height: 0; gap: 8px; }
+.records-import-panel { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 20px; padding: 16px 20px; border: 1px solid #e0e6ee; border-radius: 14px; background: #eef2f7; }
+.records-import-panel p { margin: 5px 0 0; font-size: 13px; line-height: 1.55; }
+#import-result { flex-basis: 100%; color: #344c83; }
+#import-detail { margin-top: 20px; }
+.records-note-overview { margin: 14px 0; }
+.records-note-overview summary { cursor: pointer; }
+.records-note-overview h3 { margin-bottom: 4px; }
+
+@media (max-width: 940px) {
+  .records-compare { grid-template-columns: minmax(0, 1fr); }
+  .records-waveform { max-width: 600px; }
+}

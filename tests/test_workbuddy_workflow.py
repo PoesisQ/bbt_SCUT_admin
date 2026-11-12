@@ -107,6 +107,23 @@ class WorkBuddyWorkflowTests(unittest.TestCase):
         self.assertEqual(self.store.get(review["id"])["cycle"], 1)
         self.assertEqual(len(self.store.get(question["id"])["attempts"]), 2)
 
+    def test_restart_restores_the_answer_before_the_current_variant(self):
+        server = self.server()
+        first = self.start(server)
+        self.tool(server, "submit_practice_answer", practice_id=first["id"],
+                  answer="唤醒后资源一定可用。", request_id="wrong-answer", expected_revision=0)
+        session = self.tool(server, "get_learning_session", session_id=first["session_id"])
+        variant = self.tool(server, "start_practice", course=self.course, topic="条件变量",
+            question="若另一个线程先取走资源，被唤醒的线程应怎样做？", expected_answer="在锁内重检，资源不可用则等待。",
+            citations=[{"evidence_id": self.eid, "quote": self.quote}], request_id="variant",
+            session_id=session["id"], expected_revision=session["revision"])
+        resumed = self.tool(self.server(), "get_learning_session", session_id=session["id"])
+        self.assertEqual(resumed["practice"]["id"], variant["id"])
+        self.assertNotIn("expected_answer", resumed["practice"])
+        self.assertEqual([p["id"] for p in resumed["previous_practices"]], [first["id"]])
+        self.assertEqual(resumed["previous_practices"][0]["last_attempt"]["answer"], "唤醒后资源一定可用。")
+        self.assertEqual(len(self.store.get(first["id"], "practice")["attempts"]), 1)
+
     def test_web_variant_reuses_workbuddy_session_and_the_last_actual_answer(self):
         server = self.server()
         question = self.start(server)
@@ -149,7 +166,7 @@ class WorkBuddyWorkflowTests(unittest.TestCase):
         self.assertEqual(prepared["state"], "configured")
         self.assertFalse(prepared["has_sources"])
         self.assertEqual(prepared["probe"]["version"], VERSION)
-        self.assertEqual(prepared["probe"]["tools"], 25)
+        self.assertEqual(prepared["probe"]["tools"], 28)
         config = json.loads(path.read_text("utf-8"))
         self.assertEqual(config["mcpServers"]["other"], other)
         self.assertFalse(prepare_desktop(data, home=target)["config_changed"])

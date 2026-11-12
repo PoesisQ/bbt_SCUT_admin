@@ -6,10 +6,10 @@ import time
 from datetime import datetime
 
 from .learning import preferences, review_candidates
-from .planner import TZ
+from .planner import TZ, stamp
 from .practice import current_sources
 from .storage import terms
-from .tutoring import learning_gaps
+from .tutoring import learning_gaps, task_deadline_fields
 from ..telemetry import emit
 
 
@@ -55,15 +55,23 @@ def daily_plan(store, minutes=30, course="", now=None):
     candidates, warnings, blocked = [], [], []
     tasks = [t for t in store.list("task") if t.get("status") == "accepted" and not t.get("completed") and (not course or t["course"] == course)]
     for task in tasks:
-        reasons, days = [], None
-        deadline = task.get("deadline")
+        reasons, days, overdue, exact = [], None, False, None
+        deadline_fields = task_deadline_fields(store, task)
+        deadline, deadline_at, notice = (deadline_fields[k] for k in ("deadline", "deadline_at", "deadline_evidence"))
         if deadline:
             try:
                 days = (datetime.fromisoformat(deadline).date() - local.date()).days
+                exact = stamp(deadline_at) if deadline_at else None
+                overdue = days < 0 or bool(exact and local >= exact)
             except (ValueError, TypeError):
                 warnings.append(task["title"] + "的截止日期无法读取，先核对日期。")
         if days is not None:
-            reasons.append("已过截止日期，先确认能否补交" if days < 0 else "今天截止" if days == 0 else f"还有 {days} 天截止")
+            if overdue:
+                reasons.append("已过截止时间，先确认能否补交")
+            elif days == 0:
+                reasons.append(f"今天 {exact:%H:%M} 截止" if exact else "今天截止")
+            else:
+                reasons.append(f"还有 {days} 天截止")
         else:
             reasons.append("截止日期未确认")
         maximum = task.get("estimate_max")
@@ -73,10 +81,15 @@ def daily_plan(store, minutes=30, course="", now=None):
             reasons.append("已达到预计用时，先检查完成情况")
         score = 110 if days is not None and days <= 1 else 85 if days is not None and days <= 3 else 65 if days is not None and days <= 7 else 35
         reasons.append(f"按你的估计还需约 {remaining} 分钟" if maximum else "总用时未知，先试做一小段")
+        citations = task.get("citations", [])
+        if notice:
+            if notice["status"] != "matched":
+                reasons.append("改期通知已更新或无法读取，请重新核对当前期限")
+            citations = [notice] if notice["status"] == "matched" else []
         candidates.append({"kind": "task", "id": task["id"], "course": task["course"], "title": task["title"],
-            "deadline": deadline, "priority": score, "minutes": min(15, remaining), "remaining_estimate": remaining,
-            "reasons": reasons, "citations": task.get("citations", []),
-            "action": "先检查提交要求和已有进度，再做下一小步；时间到时记录卡点。" if days is None or days >= 0 else "先核对补交安排，再决定是否继续投入。"})
+            **deadline_fields, "priority": score, "minutes": min(15, remaining), "remaining_estimate": remaining,
+            "reasons": reasons, "citations": citations, "task_context_citations": task.get("citations", []),
+            "action": "先核对补交安排，再决定是否继续投入。" if overdue else "先检查提交要求和已有进度，再做下一小步；时间到时记录卡点。"})
     reviews = [r for r in review_candidates(store, now) if not course or r["course"] == course]
     for review in reviews:
         citations = review.get("citations", [])
@@ -167,7 +180,8 @@ def daily_plan(store, minutes=30, course="", now=None):
                 "action":"先做一道简短的回忆题。反馈后再决定剩余时间花在哪里。"})
             calibration = True
             break
-    candidates.sort(key=lambda c: (-c["priority"], c.get("deadline") or "9999", c["course"], c["id"]))
+    candidates.sort(key=lambda c: (-c["priority"], c.get("deadline_at") or (c.get("deadline") or "9999") + "T24:00",
+                                   c["course"], c["id"]))
     steps, deferred, used = [], [], 0
     for item in candidates:
         remaining = minutes - used

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>课堂记录 · SCUT 课堂助手</title>
+  <link rel="stylesheet" href="assistant.css">
+  <link rel="stylesheet" href="library.css">
+  <link rel="stylesheet" href="markmap-vendor.css">
+  <link rel="stylesheet" href="records.css?v=20261112-course-notes">
+</head>
+<body>
+<nav class="app-nav" aria-label="主导航">
+  <a class="brand" href="dashboard.html" data-share-link aria-label="SCUT 课堂助手">
+    <span class="brand-mark"><img src="brand.png" width="32" height="32" alt=""></span>
+    <span>SCUT 课堂助手</span>
+  </a>
+  <div class="nav-links">
+    <a href="index.html" data-share-link>学习对话</a>
+    <a href="dashboard.html" data-share-link aria-current="page">课堂记录</a>
+  </div>
+  <span class="chip">公开演示</span>
+</nav>
+<main class="library-shell">
+  <div class="library-toolbar"><button id="toggle-courses" type="button" aria-expanded="true" aria-controls="course-rail">收起我的课程</button></div>
+  <div id="library-layout" class="library-layout">
+    <aside id="course-rail" class="course-rail">
+      <div class="rail-heading"><h1>我的课程</h1></div>
+      <label class="search-field"><span data-icon="search" aria-hidden="true"></span><input id="search" type="search" aria-label="搜索课程内容" placeholder="搜索知识点、课时、事项"></label>
+      <div id="course-list" class="course-list" aria-label="课程列表"></div>
+      <p class="rail-help">可搜索课时、主题和笔记正文。</p>
+    </aside>
+    <div class="library-main">
+      <section id="browse">
+        <header class="library-heading"><h2 id="course-title">全部课程</h2><p id="course-meta" class="muted"></p></header>
+        <section class="records-import-panel" aria-label="课程笔记导入">
+          <div><strong>课程笔记导入</strong><p id="import-help" class="muted"></p></div>
+          <button id="import-course-notes" type="button" aria-describedby="import-help">导入课程笔记</button>
+          <p id="import-result" role="status" hidden></p>
+        </section>
+        <div class="library-filters" role="group" aria-label="浏览方式">
+          <button type="button" data-filter="lessons" aria-pressed="true" class="active">课时与内容</button>
+          <button type="button" data-filter="events" aria-pressed="false">作业与重要事项</button>
+        </div>
+        <div id="lesson-grid" class="lesson-grid"></div>
+      </section>
+      <section id="detail" hidden>
+        <button type="button" id="back-library" class="back-link">← 返回课程</button>
+        <header class="detail-heading">
+          <p id="detail-course" class="eyebrow"></p><h2 id="detail-title" tabindex="-1"></h2><p id="detail-meta" class="muted"></p>
+          <div id="sample-actions" class="detail-actions">
+            <a id="ask-lesson" class="button-link primary" href="index.html" data-share-link>带着本课问题去提问</a>
+            <a class="button-link" href="data/songzhen27-notes.zip" download="松针-27 时序补学.zip">导出笔记</a>
+          </div>
+        </header>
+        <section id="import-detail" aria-label="导入的课程笔记" hidden></section>
+        <div id="sample-detail">
+        <section class="version-panel" aria-label="本课字幕来源">
+          <div class="version-heading"><strong>本课字幕</strong><span>模拟课堂字幕，时间对应示例课时。</span></div>
+        </section>
+        <div class="tabs records-tabs" role="tablist" aria-label="课时内容">
+          <button type="button" id="tab-summary" role="tab" aria-selected="true" aria-controls="view-summary" data-view="summary" class="active">主题笔记</button>
+          <button type="button" id="tab-compare" role="tab" aria-selected="false" aria-controls="view-compare" data-view="compare" tabindex="-1">课件与讲述对照</button>
+          <button type="button" id="tab-mindmap" role="tab" aria-selected="false" aria-controls="view-mindmap" data-view="mindmap" tabindex="-1">思维导图</button>
+          <button type="button" id="tab-events" role="tab" aria-selected="false" aria-controls="view-events" data-view="events" tabindex="-1">重要事项</button>
+          <button type="button" id="tab-transcript" role="tab" aria-selected="false" aria-controls="view-transcript" data-view="transcript" tabindex="-1">字幕原文</button>
+        </div>
+        <section id="view-summary" role="tabpanel" aria-labelledby="tab-summary"></section>
+        <section id="view-compare" role="tabpanel" aria-labelledby="tab-compare" hidden>
+          <label class="records-topic-picker">分段笔记<select id="compare-topic"></select></label>
+          <div id="compare-content" class="records-compare"></div>
+        </section>
+        <section id="view-mindmap" role="tabpanel" aria-labelledby="tab-mindmap" hidden>
+          <div class="records-map"><button id="fit-map" type="button">适应窗口</button><svg id="lesson-map" role="img" aria-label="松针-27 时序学习思维导图"></svg></div>
+        </section>
+        <section id="view-events" role="tabpanel" aria-labelledby="tab-events" hidden></section>
+        <section id="view-transcript" role="tabpanel" aria-labelledby="tab-transcript" hidden>
+          <label class="search-field records-transcript-search"><span data-icon="search" aria-hidden="true"></span><input id="transcript-search" type="search" aria-label="搜索本课字幕" placeholder="搜索本课字幕"></label>
+          <div id="transcript" class="transcript" aria-label="模拟课堂字幕原文"></div>
+        </section>
+        </div>
+      </section>
+    </div>
+  </div>
+</main>
+<script src="ui-icons.js"></script>
+<script src="site-links.js?v=20261112-records"></script>
+<script src="data/corpus.js?v=20261112-notices"></script>
+<script src="retrieval.js?v=20261112-notices"></script>
+<script src="library-core.js?v=20261112-course-notes"></script>
+<script src="markmap-vendor.min.js"></script>
+<script src="data/lesson-sample.js?v=20261112-course-notes"></script>
+<script src="data/neuroscience-sample.js?v=20261112-preset-import"></script>
+<script src="dashboard-demo.js?v=20261112-preset-import"></script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
   "name": "scut-learning-team",
-  "version": "0.2.0",
-  "description": "Reviews classroom evidence and prepares cited quizzes in WorkBuddy.",
+  "version": "0.4.0",
+  "description": "Explains missed lectures, adapts practice to student answers, and revises study plans after verified course updates.",
   "author": {
     "name": "PoesisQ",
     "email": "PoesisQ@users.noreply.github.com"
@@ -10,54 +10,70 @@
   "license": "MIT",
   "agents": [
     "./agents/scut-learning-team-lead.md",
+    "./agents/scut-concept-explainer.md",
     "./agents/scut-quiz-writer.md",
-    "./agents/scut-evidence-reviewer.md"
+    "./agents/scut-evidence-reviewer.md",
+    "./agents/scut-study-planner.md"
   ],
   "expertType": "team",
   "agentName": "scut-learning-team-lead",
   "teamInfo": {
     "leadAgent": "scut-learning-team-lead",
-    "memberAgents": ["scut-quiz-writer", "scut-evidence-reviewer"]
+    "memberAgents": ["scut-concept-explainer", "scut-quiz-writer", "scut-evidence-reviewer", "scut-study-planner"]
   },
   "displayName": {"en": "SCUT Course Review Team", "zh": "SCUT 课程复习组"},
-  "profession": {"en": "Course Review Team", "zh": "课程复习组"},
+  "profession": {"en": "SCUT Course Review Team", "zh": "SCUT 课程复习组"},
   "displayDescription": {
-    "en": "Use selected course sources to prepare practice sheets and review conflicting statements with page and video references.",
-    "zh": "为学生核对课件与课堂原话，按主题编写带出处的练习题单，并检查引文、推导条件和证据缺口。"
+    "en": "Cites course materials, explains missed concepts, designs follow-up practice from student answers, and revises study plans after checking teacher notices.",
+    "zh": "为缺课学生查课堂出处、补讲关键概念，按真实作答出变式，核对教师改期通知并调整剩余学习安排。"
   },
   "avatar": "avatars/team.png",
   "categoryId": "15-Education",
-  "defaultInitPrompt": {"en": "Prepare a practice sheet from one of my courses.", "zh": "用我这门课的资料出一套带解析和出处的题。"},
+  "defaultInitPrompt": {"en": "I missed the condition variable lecture; catch me up with two questions.", "zh": "我缺了条件变量那一讲，帮我补齐并出两道题。"},
   "plugin": "scut-learning-team",
   "tags": [
-    {"en": "Course evidence", "zh": "课堂出处"},
-    {"en": "Practice sheets", "zh": "复习题单"},
-    {"en": "Source comparison", "zh": "来源核对"}
+    {"en": "Course evidence", "zh": "课程出处"},
+    {"en": "Targeted practice", "zh": "错因复测"},
+    {"en": "Study planning", "zh": "学习安排"}
   ],
   "quickPrompts": [
-    {"en": "Prepare a practice sheet from one of my courses.", "zh": "用我这门课的资料出一套带解析和出处的题。"},
-    {"en": "Check a conflict between lecture captions and slides.", "zh": "帮我核对一处字幕和课件的说法。"},
-    {"en": "Compare a classroom statement with a public reference.", "zh": "对照公开资料，看看老师这句话适用的条件。"}
+    {"en": "I missed the condition variable lecture; catch me up with two questions.", "zh": "我缺了条件变量那一讲，帮我补齐并出两道题。"},
+    {"en": "I thought any data stability before the clock edge was enough. Find the missing step and give me a follow-up question.", "zh": "我认为数据只要在时钟沿前稳定就满足建立时间要求。帮我看看漏了哪一步，再给我一道变式。"},
+    {"en": "Check the old and new deadlines for the Pine Needle 27 lab report and preview the changes to my plan.", "zh": "老师更新了松针-27实验报告的截止时间。帮我核对新旧通知，预览需要调整的安排。"}
   ],
   "members": [
     {
       "id": "scut-learning-team-lead",
-      "name": {"en": "Course Tutor", "zh": "课程导师"},
-      "profession": {"en": "Study Workflow Lead", "zh": "复习任务主理人"},
+      "name": {"en": "Lu", "zh": "路续之"},
+      "profession": {"en": "Course Team Lead", "zh": "课程主理人"},
       "avatar": "avatars/team.png",
       "role": "lead"
     },
     {
+      "id": "scut-concept-explainer",
+      "name": {"en": "Ji", "zh": "纪承前"},
+      "profession": {"en": "Concept Linking Tutor", "zh": "概念衔接讲师"},
+      "avatar": "avatars/team.png",
+      "role": "member"
+    },
+    {
       "id": "scut-quiz-writer",
-      "name": {"en": "Quiz Writer", "zh": "出题员"},
-      "profession": {"en": "Evidence-grounded Quiz Writer", "zh": "课程出题"},
+      "name": {"en": "Bi", "zh": "毕有据"},
+      "profession": {"en": "Evidence Quiz Writer", "zh": "证据出题员"},
       "avatar": "avatars/team.png",
       "role": "member"
     },
     {
       "id": "scut-evidence-reviewer",
-      "name": {"en": "Evidence Reviewer", "zh": "证据复核员"},
-      "profession": {"en": "Evidence and Reasoning Reviewer", "zh": "原文与推导复核"},
+      "name": {"en": "Yan", "zh": "严据实"},
+      "profession": {"en": "Course Evidence Reviewer", "zh": "课程证据复核员"},
+      "avatar": "avatars/team.png",
+      "role": "member"
+    },
+    {
+      "id": "scut-study-planner",
+      "name": {"en": "Cheng", "zh": "程知序"},
+      "profession": {"en": "Study Planner", "zh": "学习规划师"},
       "avatar": "avatars/team.png",
       "role": "member"
     }

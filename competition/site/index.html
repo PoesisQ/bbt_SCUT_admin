@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>学习伙伴 · 课程补学助手（脱敏演示版）</title>
+<meta name="description" content="从一个课堂问题开始，查找示例讲义原文，阅读讲解，做题并安排复习。">
+<link rel="stylesheet" href="study.css">
+<link rel="stylesheet" href="study-conversation.css">
+<link rel="stylesheet" href="study-runtime.css">
+<link rel="stylesheet" href="desktop-entry.css">
+<link rel="stylesheet" href="study-workspace.css">
+<link rel="stylesheet" href="site.css?v=20261112-attachments">
+</head>
+<body class="study-page">
+
+<a class="skip-link" href="#question">跳到提问输入框</a>
+
+<header class="topbar">
+  <a class="brand" href="" aria-label="课程补学助手首页">
+    <img src="brand.png" alt="" width="40" height="40">
+    <span><b>学习伙伴</b><small>SCUT · 在课堂之外继续</small></span>
+  </a>
+  <nav class="study-nav" aria-label="主导航">
+    <a href="" aria-current="page">学习对话</a>
+    <a href="dashboard.html" data-share-link>课堂记录</a>
+    <button type="button" data-open="review" aria-haspopup="dialog">今日清单</button>
+  </nav>
+  <div class="top-actions">
+    <span class="status" data-state="ready">公开演示</span>
+    <button type="button" id="open-tools" aria-label="打开资料与安排" aria-haspopup="dialog">
+      <span data-icon="grid" aria-hidden="true"></span><span>资料与安排</span>
+    </button>
+  </div>
+</header>
+
+<main class="conversation-shell">
+  <section id="conversation" class="conversation" aria-label="补学对话" aria-live="polite">
+    <div id="study-exchange"></div>
+    <div id="study-follow-up"></div>
+  </section>
+
+  <section id="welcome" class="welcome">
+    <div class="welcome-copy">
+      <p class="eyebrow">每一点理解，都从这里积累</p>
+      <h1>从一个问题，<br>开始今天的学习。</h1>
+      <p class="welcome-description">带来没听懂的课堂内容，或一道想重算的题。<br>这里用示例讲义，和你一起查原文、做练习。</p>
+    </div>
+    <div class="welcome-art" aria-hidden="true">
+      <img src="brand.png" alt="" width="180" height="180">
+      <span>课堂有迹可循，学习慢慢深入。</span>
+    </div>
+  </section>
+
+  <section class="composer-dock" aria-label="提问与检索">
+    <form id="ask-form" class="composer">
+      <label class="sr-only" for="question">问题或任务</label>
+      <textarea id="question" maxlength="300" rows="2" placeholder="写下缺的那一讲、没听懂的概念，或一道题…" aria-describedby="composer-help"></textarea>
+      <input id="attachment-file" type="file" aria-label="选择本机附件" hidden>
+      <div id="draft-attachment" class="attachment-list" aria-live="polite"></div>
+      <div class="composer-actions">
+        <div class="composer-inputs">
+          <button id="add-attachment" type="button" class="attach-button" aria-label="添加附件" aria-haspopup="dialog"><span data-icon="paperclip" aria-hidden="true"></span><span>附件</span></button>
+          <button id="btn-examples" type="button" class="attach-button" aria-label="查看示例问法"><span data-icon="help" aria-hidden="true"></span><span>示例问法</span></button>
+          <span class="composer-divider" aria-hidden="true"></span>
+          <select id="course" aria-label="限定检索的课程范围">
+            <option value="">跨课程（自动）</option>
+            <option value="os">演示课 · 并发控制</option>
+            <option value="dsd">演示课 · 数字电路</option>
+            <option value="other">演示课 · 会议管理</option>
+          </select>
+        </div>
+        <button id="send" type="submit" class="primary send-button" aria-label="发送消息">发送<span data-icon="arrow" aria-hidden="true"></span></button>
+      </div>
+    </form>
+    <div class="composer-meta">
+      <p id="composer-help">可查示例讲义、考试和作业通知<span class="keyboard-hint"> · Enter 发送 / Shift + Enter 换行</span></p>
+      <span>记录只保存在当前标签页</span>
+    </div>
+    <p id="ask-status" class="composer-note" role="status" hidden></p>
+  </section>
+
+  <section id="starters" class="starters" aria-labelledby="starters-title">
+    <div class="starter-heading"><h2 id="starters-title">也可以，从这里开始</h2><span>按你现在需要的来</span></div>
+    <div class="starter-grid" id="scenario-grid">
+      <button type="button" data-scenario="missed">
+        <span class="starter-icon tone-blue" data-icon="clock" aria-hidden="true"></span>
+        <span class="starter-copy"><strong>缺课补学</strong><small>缺了并发控制第 1 讲，从讲义原句把它补回来</small></span>
+        <span class="starter-arrow" data-icon="arrow" aria-hidden="true"></span>
+      </button>
+      <button type="button" data-scenario="confused">
+        <span class="starter-icon tone-clay" data-icon="shield" aria-hidden="true"></span>
+        <span class="starter-copy"><strong>当时没听懂</strong><small>看看条件变量为什么要用 while 重新检查</small></span>
+        <span class="starter-arrow" data-icon="arrow" aria-hidden="true"></span>
+      </button>
+      <button type="button" data-scenario="exam">
+        <span class="starter-icon tone-sage" data-icon="book" aria-hidden="true"></span>
+        <span class="starter-copy"><strong>考前复习</strong><small>回到数字电路讲义第 7 页重算建立时间</small></span>
+        <span class="starter-arrow" data-icon="arrow" aria-hidden="true"></span>
+      </button>
+      <button type="button" data-scenario="bridge">
+        <span class="starter-icon tone-rose" data-icon="link" aria-hidden="true"></span>
+        <span class="starter-copy"><strong>跨课程衔接</strong><small>分清同一个术语在不同课程里的意思</small></span>
+        <span class="starter-arrow" data-icon="arrow" aria-hidden="true"></span>
+      </button>
+    </div>
+    <div class="bx-chips-head"><span>推荐问法</span><button type="button" id="toggle-starters" class="bx-link">展开全部</button></div>
+    <div class="bx-chips" id="starters-chips"></div>
+  </section>
+
+</main>
+
+<dialog id="attachment-dialog" class="tools-menu" aria-labelledby="attachment-title">
+  <div class="section-head"><h2 id="attachment-title">添加附件</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <button type="button" id="choose-attachment"><span data-icon="folder" aria-hidden="true"></span>选择本机文件</button>
+  <button type="button" id="use-sample-attachment"><span data-icon="paperclip" aria-hidden="true"></span>使用示例附件</button>
+  <p class="subtle">文件内容留在本机。添加电容课件示例后，发送「讲解一下」可查看带出处的讲解。</p>
+</dialog>
+
+<!-- 资料与安排：访客自带模型 + 语料说明 -->
+<dialog id="tools-dialog" class="tools-menu" aria-labelledby="tools-title">
+  <div class="section-head"><h2 id="tools-title">资料与安排</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <button type="button" id="open-sources" disabled><span data-icon="folder" aria-hidden="true"></span>资料与核对记录</button>
+  <button type="button" data-open="review"><span data-icon="clock" aria-hidden="true"></span>复习安排</button>
+  <details class="bx-byok">
+    <summary>模型设置</summary>
+    <p class="subtle">可选。用你指定的模型改写本轮讲解，页面会核对回答中标注的出处。</p>
+    <label for="byok-endpoint">接口地址（兼容 OpenAI Chat Completions）<input id="byok-endpoint" type="url" spellcheck="false" placeholder="https://你的服务/v1/chat/completions"></label>
+    <label for="byok-model">模型名<input id="byok-model" spellcheck="false" placeholder="例如 gpt-4o-mini"></label>
+    <label for="byok-key">API Key<input id="byok-key" type="password" autocomplete="off" spellcheck="false" placeholder="只保存在当前标签页内存"></label>
+    <div class="bx-byok-actions">
+      <button type="button" id="byok-save">保存到本次会话</button>
+      <button type="button" class="primary" id="byok-run">用我的模型改写讲解</button>
+      <button type="button" id="byok-clear">清除密钥</button>
+    </div>
+    <p id="byok-status" class="fine" role="status"></p>
+    <div class="bx-output" id="byok-output" hidden></div>
+    <p class="fine">密钥只发往你填写的地址，刷新后清空。改写使用你的模型账户额度。</p>
+  </details>
+  <div class="menu-footer">
+    <button type="button" data-open="runtime" id="open-runtime" disabled>运行详情</button>
+    <button type="button" data-open="about">关于演示</button>
+  </div>
+</dialog>
+
+<dialog id="panel-review" class="today-dialog" aria-labelledby="review-title">
+  <div class="section-head"><h2 id="review-title">今日清单</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <div id="review-content"><p class="subtle">先提一个问题。有讲义依据时，这里会列出本轮的复习建议。</p></div>
+</dialog>
+
+<dialog id="panel-runtime" class="workspace-dialog" aria-labelledby="runtime-title">
+  <div class="section-head sticky-heading"><h2 id="runtime-title">运行详情</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <div class="bx-panel" id="runtime-content"></div>
+</dialog>
+
+<dialog id="panel-about" class="workspace-dialog" aria-labelledby="about-title">
+  <div class="section-head sticky-heading"><h2 id="about-title">关于演示</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <div class="bx-panel">
+    <h3>作品名称与赛道</h3>
+    <p>课程补学助手 · 赛道一「AI+教学科研」。公开演示使用原创合成讲义，回放位置为示例。桌面版可在本机连接 SCUT 百步梯和个人资料库。</p>
+    <div class="bx-panel-actions">
+      <button type="button" data-open="eval">检索评测</button>
+      <button type="button" data-open="platform">平台能力</button>
+      <button type="button" data-open="migration">本地与公开版功能</button>
+    </div>
+    <h3>解决的核心问题</h3>
+    <p>学生缺课或没听懂后，面对回放、字幕、课件与多版转写，很难判断哪一句才是可信依据。本作品把「出处查证 → 带出处的讲解 → 最小练习 → 复习安排」做成一条可操作闭环，让每条结论都能回到原文位置。</p>
+    <h3>知识库来源与核心交互流程</h3>
+    <p>知识库包含原创讲义、模拟字幕和课程通知。考试与作业问答引用所选课程的现行模拟教师通知。讲义先按关键词和术语检索，证据不足时由浏览器计算语义相似度。出处保留页码或小节。</p>
+    <h3>界面来源</h3>
+    <p>线上这一版沿用本机 <code>extension/study.html</code> 学习对话工作台的界面骨架与样式（顶栏、欢迎区、对话气泡、底部输入框、四张场景卡），但把 8 个依赖 <code>chrome.*</code> 与 <code>127.0.0.1:8765</code> 的 JS 模块替换成浏览器端确定性检索。</p>
+    <h3>边界声明</h3>
+    <p>正式软件依托校内课程平台（SCUT 百步梯）的回放、字幕、课件与课程索引，跑在本机 Windows 桌面服务与浏览器扩展里；线上这一版是<b>脱敏交互演示壳</b>，两者是不同执行环境。桌面上的 Skill、MCP 连接器、本地 SQLite 与登录态不会因为发布网页而自动迁移。</p>
+    <div class="bx-caveat">公开交付排除私人课件、课堂正文、模型凭据、Cookie 与配对信息。课程解释的教学效果、跨来源纠错的教学价值、知识联系与板书核实仍属部分完成或待验证；页面不把设计目标写成已实现，也不编造学习成效数字。浏览器端的确定性检索是本机规则的等价复刻，不等于 WorkBuddy 原生工作流引擎调度。</div>
+  </div>
+</dialog>
+
+<dialog id="panel-migration" class="workspace-dialog" aria-labelledby="migration-title">
+  <div class="section-head sticky-heading"><h2 id="migration-title">本机工作台 → 线上演示版：迁移清单</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <div class="bx-panel">
+    <p>本机页面原型是 <code>extension/study.html</code>（学习对话工作台，8 个 JS 模块），依赖 <code>chrome.*</code> API、<code>127.0.0.1:8765</code> 本地服务、三个 SQLite、校内 Cookie 与麦克风，因此<b>整页不能直接发布</b>。能搬的是界面骨架、交互、语料与检索规则；需要本机进程或私有数据的功能在线上一律去掉或换实现。</p>
+    <table class="bx-table bx-migrate"><thead><tr><th>本机功能</th><th>线上状态</th><th>原因 / 替代做法</th></tr></thead><tbody>
+      <tr><td>顶栏 / 欢迎区 / 对话气泡 / 底部输入框样式</td><td class="bx-ok">已迁移</td><td>5 份 CSS 与内联 SVG 图标原样复用，去扩展专属 JS</td></tr>
+      <tr><td>学习对话输入框、Enter 发送</td><td class="bx-ok">已迁移</td><td>改为确定性检索输入框，不接模型也能返回真实结果</td></tr>
+      <tr><td>四个 starter 提问入口</td><td class="bx-ok">已迁移</td><td>换成 12 条固定评测问法 + 4 张场景卡，点一下就跑同一条流水线</td></tr>
+      <tr><td>原文证据卡、页号 / 课时时间</td><td class="bx-ok">已迁移</td><td>由浏览器端检索实时生成，含命中类型、覆盖度与可靠性标签</td></tr>
+      <tr><td>资料与核对记录、错误引文拦截</td><td class="bx-ok">已迁移</td><td>停用、旧版、跨课、仅标题命中、转写冲突逐条给出拦截原因</td></tr>
+      <tr><td>练习记录、作答后显示解析</td><td class="bx-ok">已迁移</td><td>题目与干扰项由本轮证据动态生成；作答只存 sessionStorage</td></tr>
+      <tr><td>复习安排 / 今日清单</td><td class="bx-ok">简化迁移</td><td>按本轮证据生成文本安排，不做自动排序、不推送提醒</td></tr>
+      <tr><td>检索规则（FTS5 四级打分等）</td><td class="bx-ok">等价复刻</td><td>Python 逻辑用 JS 重写，12 条固定用例线上可复跑</td></tr>
+      <tr><td>模型讲解 / 换个问法</td><td class="bx-opt">可选 BYOK</td><td>访客自带 Key 才调用；不填则用确定性讲解，零额度、零弹窗</td></tr>
+      <tr><td>对话附件</td><td class="bx-ok">可演示</td><td>选择本机文件或内置示例，展开查看文件信息，并提问讲解示例课件</td></tr>
+      <tr><td>本地文件夹批量导入资料</td><td class="bx-no">桌面版</td><td>桌面版读取本机路径，网页使用随包分发的示例语料</td></tr>
+      <tr><td>同步课堂记录 / 连接百步梯</td><td class="bx-no">必须去掉</td><td>需校内登录态与本机服务，公网沙箱拿不到 Cookie</td></tr>
+      <tr><td>课堂截图索引与板书核实</td><td class="bx-no">必须去掉</td><td>需本地文件与 OCR；该功能在台账里本就待验证</td></tr>
+      <tr><td>课表 PDF 识别、任务日历</td><td class="bx-no">必须去掉</td><td>需本地 PDF 解析与持久化；改用轻量文本安排</td></tr>
+      <tr><td>录音 / ASR / 音轨转写</td><td class="bx-no">必须去掉</td><td>需麦克风与本机转写进程；语料里保留转写样例供拦截演示</td></tr>
+      <tr><td>手机提醒、22:00–08:00 推送</td><td class="bx-no">必须去掉</td><td>无后台常驻服务；安排只在页面内展示</td></tr>
+      <tr><td>本地 SQLite / 长期学习档案</td><td class="bx-no">必须去掉</td><td>发布沙箱无持久化数据库；作答只留当前标签页</td></tr>
+      <tr><td>Keyring 加密保存模型 Key</td><td class="bx-opt">改为 BYOK</td><td>不落盘、不加密托管；密钥只存在浏览器内存，刷新即清空</td></tr>
+      <tr><td>向量检索</td><td class="bx-ok">浏览器运行</td><td>网页使用量化模型补充关键词检索，首次需要下载模型文件</td></tr>
+      <tr><td><code>chrome.*</code> 扩展 API、8765 服务</td><td class="bx-no">必须去掉</td><td>公网页面无扩展运行时，也没有本机回环端口</td></tr>
+    </tbody></table>
+    <div class="bx-caveat">线上版可用示例资料查原文、做练习和看复习建议。导入个人课程、录音和手机提醒请使用桌面版。</div>
+  </div>
+</dialog>
+
+<dialog id="panel-eval" class="workspace-dialog" aria-labelledby="eval-title">
+  <div class="section-head sticky-heading"><h2 id="eval-title">浏览器端固定评测</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <div class="bx-panel">
+    <h3 id="eval-headline">正在本页复跑固定评测…</h3>
+    <p>下面的结果<b>不是抄过来的静态表格</b>：页面加载时用刚打开的那份 <code>retrieval.js</code> 在浏览器里真实跑 12 条检索用例与 5 条引文核对，逐条与 <code>scripts/evaluate_workbuddy.py</code> 的期望值比对。</p>
+    <div id="eval-summary" class="bx-metrics"></div>
+    <table class="bx-table"><thead><tr><th>用例</th><th>问题</th><th>期望命中</th><th>实际返回</th><th>结果</th></tr></thead><tbody id="eval-table"></tbody></table>
+    <h3>引文核对</h3>
+    <table class="bx-table"><thead><tr><th>情形</th><th>证据 ID</th><th>判定</th><th>原因</th></tr></thead><tbody id="quote-table"></tbody></table>
+    <div class="bx-caveat" id="eval-caveat"></div>
+  </div>
+</dialog>
+
+<dialog id="panel-platform" class="workspace-dialog" aria-labelledby="platform-title">
+  <div class="section-head sticky-heading"><h2 id="platform-title">WorkBuddy 平台功能应用与状态</h2><button type="button" class="close-button" data-close aria-label="关闭">×</button></div>
+  <div class="bx-panel">
+    <p>逐项标注已接线 / 已验证 / 待验证，不把配置写成平台验收完成。</p>
+    <table class="bx-table"><tbody id="platform-table"></tbody></table>
+    <div class="bx-caveat">此网页无需登录。若要用本机课程资料或实际调用专家团，请在 WorkBuddy 客户端完成接入。网页的模型改写为可选功能，使用你填写的模型接口。</div>
+  </div>
+</dialog>
+
+<script src="ui-icons.js?v=20261112-attachments"></script>
+<script src="site-links.js?v=20261112-records"></script>
+<script src="data/corpus.js?v=20261112-notices"></script>
+<script src="retrieval.js?v=20261112-notices"></script>
+<script src="app.js?v=20261112-attachment-explanation"></script>
+</body>
+</html>

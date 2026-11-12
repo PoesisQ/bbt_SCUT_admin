@@ -489,19 +489,26 @@ def router(settings, classroom_store):
 
     @api.post("/proposals/{pid}")
     def decide(pid: str, body: Decide):
-        proposal = study.get(pid, "proposal")
-        if proposal["proposal_kind"] == "task" and body.status == "accepted" and (body.estimate_min is None or body.estimate_max is None):
-            raise ValueError("请先估计任务用时；较大的项目可以先拆成一个具体步骤")
-        # Only this explicit user action turns model suggestions into tasks/memory.
-        value = study.save("proposal", {**proposal, "status": body.status}, pid)
-        if proposal["proposal_kind"] == "task" and body.status == "accepted":
-            task_id = "task-" + pid
-            try:
-                existing = study.get(task_id, "task")
-            except KeyError:
-                existing = {}
-            study.save("task", {**proposal, **body.model_dump(mode="json"), "source": "confirmed_proposal", "proposal_id": pid,
-                               "completed": existing.get("completed", False), "spent_minutes": existing.get("spent_minutes", 0)}, task_id)
+        with study.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            proposal = study.get(pid, "proposal", db=db)
+            accept_task = proposal["proposal_kind"] == "task" and body.status == "accepted"
+            if accept_task and (body.estimate_min is None or body.estimate_max is None):
+                raise ValueError("请先估计任务用时；较大的项目可以先拆成一个具体步骤")
+            value = study.save("proposal", {**proposal, "status": body.status}, pid, db=db)
+            if accept_task:
+                task_id = "task-" + pid
+                try:
+                    existing = study.get(task_id, "task", db=db)
+                except KeyError:
+                    existing = {}
+                fields = body.model_dump(mode="json")
+                if fields["deadline"] == existing.get("deadline"):
+                    fields.update({k: existing[k] for k in ("deadline_at", "deadline_evidence", "deadline_change_id")
+                                   if k in existing})
+                study.save("task", {**proposal, **fields, "source": "confirmed_proposal", "proposal_id": pid,
+                           "completed": existing.get("completed", False), "spent_minutes": existing.get("spent_minutes", 0)},
+                           task_id, db=db)
         return value
 
     @api.post("/tasks")
@@ -518,7 +525,9 @@ def router(settings, classroom_store):
 
     @api.post("/tasks/{tid}/progress")
     def progress(tid: str, body: Progress):
-        return study.save("task", {**study.get(tid, "task"), **body.model_dump()}, tid)
+        with study.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            return study.save("task", {**study.get(tid, "task", db=db), **body.model_dump()}, tid, db=db)
 
     @api.post("/plans")
     def plan(body: Plan):
@@ -527,11 +536,21 @@ def router(settings, classroom_store):
             if timetable.get("status") == "accepted":
                 busy += timetable.get("busy", [])
         value = make_plan(study.list("task"), **body.model_dump(exclude={"busy"}), busy=busy)
-        return study.save("plan", value)
+        return study.save("plan", {**value, "busy": [b.model_dump() for b in body.busy]})
 
     @api.post("/plans/{pid}/confirm")
     def confirm_plan(pid: str):
-        return study.save("plan", {**study.get(pid, "plan"), "status": "accepted"}, pid)
+        with study.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            value = study.get(pid, "plan", db=db)
+            if value["status"] == "accepted":
+                return value
+            precise_deadlines = {t["id"]: stamp(t["deadline_at"]) for t in study.list("task", db=db)
+                                 if t.get("deadline_at") and not t.get("completed")}
+            if any(stamp(b["end"]) > precise_deadlines[b["task_id"]] for b in value["blocks"]
+                   if b["task_id"] in precise_deadlines):
+                raise ValueError("任务截止时刻已变更，请重新生成计划")
+            return study.save("plan", {**value, "status": "accepted"}, pid, db=db)
 
     @api.get("/plans/{pid}/calendar")
     def export_calendar(pid: str):

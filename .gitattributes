@@ -12,3 +12,8 @@
 *.cmd text eol=crlf
 *.png binary
 extension/MARKMAP-LICENSES.txt text eol=lf
+competition/site/MARKMAP-LICENSES.txt text eol=lf
+competition/site/models/**/LICENSE.txt text eol=lf
+competition/site/vendor/**/LICENSE-*.txt text eol=lf
+# Preserve the upstream ONNX Runtime source as distributed.
+competition/site/vendor/transformers/ort-wasm-simd-threaded.jsep.js whitespace=-blank-at-eol

@@ -1,6 +1,6 @@
 # 项目实现说明
 
-本页先列出当前学习助手的功能入口、代码职责和数据流，后半部分保留原版学校字幕下载实现。功能与交互评审见 [现有功能与直觉性改进清单](planning/CODE_UX_REVIEW.md)；采集与队列细节见 [ASSISTANT.md](ASSISTANT.md)，学习工作台细节见 [STUDY_TECHNICAL.md](planning/STUDY_TECHNICAL.md)，学校接口观察见 [SITE_FINDINGS.md](SITE_FINDINGS.md)。
+本页先列出当前学习助手的功能入口、代码职责和数据流，后半部分保留原版学校字幕下载实现。采集与队列细节见 [ASSISTANT.md](ASSISTANT.md)，学习工作台细节见 [STUDY_TECHNICAL.md](planning/STUDY_TECHNICAL.md)，学校接口观察见 [SITE_FINDINGS.md](SITE_FINDINGS.md)。
 
 ## 当前功能与代码入口
 

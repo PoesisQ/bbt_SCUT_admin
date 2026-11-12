@@ -4,7 +4,7 @@
 
 项目基于 [jbykkk/scut-courses-replay-extraction](https://github.com/jbykkk/scut-courses-replay-extraction) 开发，保留了原有的学校字幕下载功能。
 
-**[下载 Windows 安装包][setup]** · [安装与日常使用][start] · [WorkBuddy 接入][workbuddy] · [反馈问题][issues]
+**[在线体验][online]** · **[下载 Windows 安装包][setup]** · [安装与日常使用][start] · [WorkBuddy 接入][workbuddy] · [反馈问题][issues]
 
 主要使用环境：**Windows 10/11 x64 + Edge**，浏览器扩展也支持 Chrome。学校课程需要有权访问百步梯的账号；只读本地资料时不需要登录学校网站。
 
@@ -12,14 +12,21 @@
 
 | 版本 | 适合谁 | 包含什么 |
 | --- | --- | --- |
+| [线上演示][online] | 想直接在浏览器体验 | 用原创示例查讲义和课程通知、看课堂记录、做题和查看复习建议。无需登录或 API Key |
 | [0.13.0 Windows 预览包][release] | 想先安装使用 | 桌面入口、实时字幕、回放整理、课程笔记、本地资料问答、复习与导出 |
-| [开发源码][dev] | 想用新增功能 | 跨课时问答、今日复习清单、课件对照、离线思维导图、公开资料核对。WorkBuddy 接入进度见下方说明 |
+| [开发源码][dev] | 想用新增功能或接入 WorkBuddy | 跨课时问答、今日复习清单、离线思维导图、公开资料核对、五角色专家团与本机连接器 |
 
-**0.13.0 安装包尚不包含源码中的新增功能。** 最新源码位于 GitHub 默认分支 `main`；使用新功能请按下方“从源码运行”安装。[合并记录见 PR #1][pr]。
+**0.13.0 安装包尚不包含开发版的新增功能。** 使用开发版请按下方“从源码运行”安装。
 
 ![学习助手主界面][study-image]
 
 截图来自实际程序，使用演示数据，不包含个人课程、账号或密钥。主界面为 0.13.0，下面的跨课时问答和今日清单截图来自开发版。
+
+## 线上版：课程补学助手
+
+打开[线上演示][online]，可以试问“条件变量为什么要在 while 循环里等？”或“松针-27 实验报告现在什么时候交？”。答复附讲义或模拟通知的出处，练习和复习建议可按需展开。课堂记录页可以查看模拟字幕、改期历史、波形和思维导图，也可以导出演示笔记。
+
+网页使用原创样例，支持关键词检索和浏览器端语义检索，无需连接学校系统或安装桌面版。录音、课程同步和导入个人资料请用桌面版。线上版源码及本地预览命令见 [`competition/site/`][online-source]。
 
 ## 安装后怎么用
 
@@ -114,7 +121,7 @@
 
 WorkBuddy 是复习入口。首次从 SCUT 学习助手首页点 **准备连接器**，再点 **在 WorkBuddy 继续学习**。0.14.0 构建中的 Windows 安装器也可以在安装时准备连接器并做本机进程检查。
 
-在 **专家·技能·连接器 → 连接器 → 自定义连接器** 启用 `scut-study`，首次使用按客户端提示确认信任。新建任务，在输入框用 `/` 选择 SCUT 技能。当前连接器为 **0.6.0，25 个工具**。以后直接打开 WorkBuddy，学校登录留到导入课程或回看视频时处理。
+在 **专家·技能·连接器 → 连接器 → 自定义连接器** 启用 `scut-study`，首次使用按客户端提示确认信任。新建任务，在输入框用 `/` 选择 SCUT 技能。开发版连接器为 **0.7.0，28 个工具**。以后直接打开 WorkBuddy，学校登录留到导入课程或回看视频时处理。
 
 <details>
 <summary>查看 WorkBuddy 接入界面</summary>
@@ -135,7 +142,11 @@ WorkBuddy 是复习入口。首次从 SCUT 学习助手首页点 **准备连接�
 
 WorkBuddy 负责讲解与出题。本地 MCP 取回相关原文、检查引文与位置、保存学习进度。接入时使用 WorkBuddy 账号和本地课程索引即可。[完整接入说明][workbuddy] · [验证记录](workbuddy/VALIDATION.md)
 
-录音、回放批处理和本地课件导入从 SCUT 学习助手进入。可用原创演示课复现检索测试，也可在 WorkBuddy 资料库里用这份讲义试出题和复核。[原创演示与评测](workbuddy/demo/README.md) · [专家团配置](workbuddy/expert-team/README.md)
+### WorkBuddy 专家团
+
+**SCUT 课程复习组 0.4.0** 包含课程主理人、概念衔接讲师、证据出题员、课程证据复核员和学习规划师。可以用原创讲义试做错因复测，也可以用新旧教师通知核对改期并预览复习安排；连接本机 MCP 后，学生确认才写回任务和计划。
+
+在仓库根目录运行 `python scripts/build_workbuddy_team.py` 生成 `dist/scut-learning-team.zip`。详见[专家团配置与构建][expert-team]、[客户端接入](workbuddy/expert-team/NATIVE_SETUP.md)和[原创演示](workbuddy/demo/README.md)。配置打包与 MCP 流程已有验证；客户端实际成员调度、资料库回写和跨账号分享仍待实测。
 
 ## 模型和个人数据
 
@@ -230,7 +241,9 @@ uv run main.py get --all "课程链接"
 [android]: https://github.com/PoesisQ/bbt_SCUT_admin/releases/download/v0.10.7/SCUT-Classroom-Alerts-v0.10.7.apk
 [issues]: https://github.com/PoesisQ/bbt_SCUT_admin/issues
 [dev]: https://github.com/PoesisQ/bbt_SCUT_admin/tree/main
-[pr]: https://github.com/PoesisQ/bbt_SCUT_admin/pull/1
+[online]: https://scut-buxue-2026.app.workbuddy.host/?sharecode=YRGCACKBQL
+[online-source]: competition/site/README.md
+[expert-team]: workbuddy/expert-team/README.md
 [start]: manual/START.md
 [workbuddy]: workbuddy/README.md
 [mobile]: https://github.com/PoesisQ/bbt_SCUT_admin/blob/main/mobile/README.md
