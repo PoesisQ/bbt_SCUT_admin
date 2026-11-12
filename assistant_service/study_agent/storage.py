@@ -26,6 +26,10 @@ ALIASES = {"截止": "deadline ddl due tbd", "作业": "homework assignment exer
            "突触": "synapse synaptic", "神经元": "neuron neurons", "项目": "project", "考试": "exam examination"}
 
 
+def search_terms(query):
+    return terms(query + " " + " ".join(value for key, value in ALIASES.items() if key in query))
+
+
 class StudyStore:
     """Versioned source snapshots. Open connections per operation (also safe on Windows)."""
 
@@ -119,7 +123,7 @@ class StudyStore:
         return decorate_evidence(self, {**json.loads(row[0]), "active": bool(row[1])})
 
     def search(self, query, course, limit=8, *, source_id=None):
-        wanted = terms(query + " " + " ".join(value for key, value in ALIASES.items() if key in query))
+        wanted = search_terms(query)
         if not wanted:
             return []
         scored = []
